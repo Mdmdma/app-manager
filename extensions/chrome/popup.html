@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>jam</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <div class="header">
+    <span class="header-title">jam</span>
+    <div class="header-dots">
+      <span class="dot-label">jam</span>
+      <div class="dot" id="dot-jam" title="jam server status"></div>
+      <span class="dot-label" style="margin-left:4px">kb</span>
+      <div class="dot" id="dot-kb" title="kb server status"></div>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- STATE: idle -->
+    <div id="state-idle">
+      <div class="page-info">
+        <div class="page-title" id="page-title">Loading…</div>
+        <div class="page-url"   id="page-url"></div>
+      </div>
+      <button class="btn btn-primary" id="save-btn">
+        Save job
+      </button>
+    </div>
+
+    <!-- STATE: loading -->
+    <div id="state-loading" style="display:none">
+      <button class="btn btn-primary" disabled>
+        <div class="spinner"></div>
+        Ingesting…
+      </button>
+      <div class="loading-hint">
+        Fetching page and running LLM extraction — this may take 10–30 s
+      </div>
+    </div>
+
+    <!-- STATE: success -->
+    <div id="state-success" style="display:none">
+      <div class="panel panel-success">
+        <div class="result-company"  id="result-company"></div>
+        <div class="result-position" id="result-position"></div>
+        <div class="result-badges">
+          <span class="badge badge-saved">Saved</span>
+          <span class="badge" id="kb-badge"></span>
+        </div>
+      </div>
+      <a class="open-jam-link" href="http://localhost:8001" target="_blank">
+        Open jam UI ↗
+      </a>
+      <span class="try-again" id="reset-success">Save another page</span>
+    </div>
+
+    <!-- STATE: error-server (connection refused / network error) -->
+    <div id="state-error-server" style="display:none">
+      <div class="panel panel-error">
+        <strong>jam server is not running.</strong><br/>
+        Start it from the project directory:
+        <code class="error-code">uv run scripts/serve.py</code>
+      </div>
+      <span class="try-again" id="reset-server">Try again</span>
+    </div>
+
+    <!-- STATE: error-fetch (HTTP 422) -->
+    <div id="state-error-fetch" style="display:none">
+      <div class="panel panel-error">
+        <strong>Could not fetch or parse this page.</strong>
+        <span class="error-detail" id="error-fetch-detail"></span>
+      </div>
+      <span class="try-again" id="reset-fetch">Try again</span>
+    </div>
+
+    <!-- STATE: error-llm (HTTP 502) -->
+    <div id="state-error-llm" style="display:none">
+      <div class="panel panel-error">
+        <strong>LLM extraction failed.</strong><br/>
+        Check that your LLM provider and API key are configured in jam.
+        <span class="error-detail" id="error-llm-detail"></span>
+      </div>
+      <span class="try-again" id="reset-llm">Try again</span>
+    </div>
+
+    <!-- STATE: error-generic -->
+    <div id="state-error-generic" style="display:none">
+      <div class="panel panel-error">
+        <strong>Unexpected error.</strong>
+        <span class="error-detail" id="error-generic-detail"></span>
+      </div>
+      <span class="try-again" id="reset-generic">Try again</span>
+    </div>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

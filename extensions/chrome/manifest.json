@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "jam — Job Application Manager",
+  "version": "1.0.0",
+  "description": "Save the current job posting to jam with one click.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Save to jam",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png"
+  },
+  "permissions": ["activeTab"],
+  "host_permissions": ["http://localhost:8001/*"]
+}

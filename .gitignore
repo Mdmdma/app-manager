@@ -22,6 +22,9 @@ htmlcov/
 # Symlinks to shared files
 shared
 
+# Database
+*.db
+
 # OS
 .DS_Store
 Thumbs.db

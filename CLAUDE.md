@@ -83,6 +83,19 @@ uv run pytest --cov=jam --cov-report=term-missing
   in `tests/unit/test_config.py`.
 - Run `uv run pytest tests/unit -x` before considering a task done.
 
+## Database migrations
+
+- **Never use `executescript()`** — it issues an implicit COMMIT, bypassing the
+  `_connect()` context manager's transaction safety. Use individual `conn.execute()`
+  calls so the migration runs inside a single transaction and rolls back on failure.
+- **All migrations must be atomic** — run inside a single `_connect()` transaction.
+- **Table rebuilds require row-count verification** — when doing SQLite table
+  rebuilds (rename → create → copy → drop), assert that the row count matches
+  before dropping the old table.
+- **Never drop or rename tables outside a transaction.**
+- **Test migrations with existing data** — unit tests for schema migrations should
+  seed data first, run the migration, and assert data is preserved.
+
 ## Agents, skills, and knowledge files
 
 ### Orchestrator routing
@@ -124,8 +137,17 @@ schema, dependencies, and known limitations. These are the **first thing agents
 read** instead of re-reading source files. Each file contains a `<!-- hash: ... -->`
 comment for staleness detection.
 
+| File | Covers |
+|---|---|
+| `config.md` | `jam/config.py` — Settings fields, env vars, defaults |
+| `server-api.md` | `jam/server.py` — All FastAPI endpoints, Pydantic models |
+| `server-ui.md` | `jam/html_page.py` — Web UI structure, JS state machine |
+| `chrome-extension.md` | `extensions/chrome/` — Chrome extension architecture, states, API contract |
+
 **Self-update rule**: After modifying any source file, run `/update-knowledge <module>`
-to regenerate its knowledge file before finishing the task.
+to regenerate its knowledge file before finishing the task. The `chrome-extension`
+knowledge file is static (no generated hash) — update it manually after editing
+extension files.
 
 ### Skills (`.claude/commands/`)
 
@@ -136,6 +158,7 @@ to regenerate its knowledge file before finishing the task.
 | `add-endpoint.md` | `/add-endpoint` | Guided workflow: new FastAPI endpoint + tests |
 | `start.md` | `/start` | Start the jam server |
 | `stop.md` | `/stop` | Stop the jam server |
+| `chrome-extension.md` | `/chrome-extension` | Verify extension files and guide the user through Chrome installation |
 
 ## Environment variables
 

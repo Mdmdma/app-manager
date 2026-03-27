@@ -1,18 +1,40 @@
 {
   "permissions": {
     "allow": [
-      "Bash(uv run pytest:*)",
-      "Bash(uv run python:*)",
-      "Bash(uv run uvicorn:*)",
-      "Bash(uv run scripts/*:*)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Bash(uv run:*)",
       "Bash(uv sync:*)",
-      "Bash(git commit:*)",
+      "Bash(sha256sum:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
-      "Bash(sha256sum:*)",
-      "Bash(curl:*)",
-      "Bash(ls:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git stash:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(jq:*)",
+      "Bash(which:*)",
+      "Bash(echo:*)",
+      "Bash(mkdir:*)",
+      "Bash(true:*)",
+      "Read(/home/mathis/Documents/kb/**)"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -r:*)",
+      "Read(.env)"
     ]
   }
 }

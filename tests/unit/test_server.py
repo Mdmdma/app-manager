@@ -1,13 +1,73 @@
+import re
 import pytest
 from httpx import ASGITransport, AsyncClient
+from unittest.mock import patch, MagicMock
+from uuid import UUID
+from datetime import date
 
-from jam.server import app
+from jam.server import app, ApplicationStatus
+from jam import db as _db_module
+from jam.html_page import HTML_PAGE
 
 
 @pytest.fixture
 def client():
     transport = ASGITransport(app=app)
     return AsyncClient(transport=transport, base_url="http://test")
+
+
+@pytest.fixture(autouse=True)
+def isolated_db(tmp_path):
+    """Point every db call to a fresh SQLite db for each test."""
+    db_path = tmp_path / "test.db"
+    _db_module.init_db(db_path)
+
+    # Map server alias -> db module function name
+    alias_to_db = {
+        "db_create_application": "create_application",
+        "db_get_application": "get_application",
+        "db_list_applications": "list_applications",
+        "db_update_application": "update_application",
+        "db_delete_application": "delete_application",
+        "db_create_document": "create_document",
+        "db_get_document": "get_document",
+        "db_list_documents": "list_documents",
+        "db_update_document": "update_document",
+        "db_delete_document": "delete_document",
+        "db_create_version": "create_version",
+        "db_list_versions": "list_versions",
+        "db_get_version": "get_version",
+    }
+
+    patchers = []
+    for server_name, db_name in alias_to_db.items():
+        original = getattr(_db_module, db_name)
+        # capture db_path and original in closure
+        def _make_side_effect(fn, p):
+            return lambda *a, **kw: fn(*a, db_path=p, **kw)
+
+        patchers.append(
+            patch(
+                f"jam.server.{server_name}",
+                side_effect=_make_side_effect(original, db_path),
+            )
+        )
+
+    # Also route settings and catalog functions to the test DB
+    for fn_name in ("get_all_settings", "set_setting", "set_settings_batch", "get_catalog"):
+        original = getattr(_db_module, fn_name)
+        patchers.append(
+            patch(
+                f"jam.server.{fn_name}",
+                side_effect=_make_side_effect(original, db_path),
+            )
+        )
+
+    for p in patchers:
+        p.start()
+    yield db_path
+    for p in patchers:
+        p.stop()
 
 
 @pytest.mark.asyncio
@@ -20,9 +80,1176 @@ async def test_index_returns_html(client):
 
 
 @pytest.mark.asyncio
-async def test_health(client):
-    """GET /health should return ok status."""
-    resp = await client.get("/api/v1/health")
+async def test_health_kb_reachable(client):
+    """GET /health should report kb_status ok when kb is reachable."""
+    mock_resp = MagicMock(status_code=200)
+
+    async def fake_get(*args, **kwargs):
+        return mock_resp
+
+    mock_client = MagicMock()
+    mock_client.get = fake_get
+    mock_client.__aenter__ = lambda self: _async_return(mock_client)
+    mock_client.__aexit__ = lambda self, *a: _async_return(None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.get("/api/v1/health")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
+    assert data["kb_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_health_kb_unreachable(client):
+    """GET /health should report kb_status unreachable when kb is down."""
+    import httpx as _httpx
+
+    async def fake_get(*args, **kwargs):
+        raise _httpx.ConnectError("Connection refused")
+
+    mock_client = MagicMock()
+    mock_client.get = fake_get
+    mock_client.__aenter__ = lambda self: _async_return(mock_client)
+    mock_client.__aexit__ = lambda self, *a: _async_return(None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert data["kb_status"] == "unreachable"
+
+
+async def _async_return(val):
+    return val
+
+
+@pytest.mark.asyncio
+async def test_list_applications_empty(client):
+    """GET /applications should return empty list initially."""
+    resp = await client.get("/api/v1/applications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == []
+
+
+@pytest.mark.asyncio
+async def test_create_application(client):
+    """POST /applications should create a new application."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Google",
+            "position": "Software Engineer",
+            "status": "applied",
+            "url": "https://google.com/jobs/123",
+            "notes": "Great company",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["company"] == "Google"
+    assert data["position"] == "Software Engineer"
+    assert data["status"] == "applied"
+    assert data["url"] == "https://google.com/jobs/123"
+    assert data["notes"] == "Great company"
+    assert "id" in data
+    assert "created_at" in data
+    assert "updated_at" in data
+    # Default applied_date should be today
+    assert data["applied_date"] == date.today().isoformat()
+
+
+@pytest.mark.asyncio
+async def test_create_application_with_custom_date(client):
+    """POST /applications with custom applied_date."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Microsoft",
+            "position": "Product Manager",
+            "applied_date": "2025-01-15",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["applied_date"] == "2025-01-15"
+
+
+@pytest.mark.asyncio
+async def test_create_application_minimal(client):
+    """POST /applications with minimal required fields."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Amazon",
+            "position": "Data Scientist",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["company"] == "Amazon"
+    assert data["position"] == "Data Scientist"
+    assert data["status"] == "not_applied_yet"
+    assert data["url"] is None
+    assert data["notes"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_application_invalid_company(client):
+    """POST /applications with empty company should fail."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "",
+            "position": "Engineer",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_create_application_auto_creates_documents(client):
+    """POST /applications should auto-create CV and Cover Letter documents."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "Test Co", "position": "Dev"},
+    )
+    assert resp.status_code == 201
+    app_id = resp.json()["id"]
+    docs_resp = await client.get(f"/api/v1/applications/{app_id}/documents")
+    assert docs_resp.status_code == 200
+    docs = docs_resp.json()
+    assert len(docs) == 2
+    doc_types = {d["doc_type"] for d in docs}
+    assert doc_types == {"cv", "cover_letter"}
+    # Both should have non-empty latex from default templates
+    for doc in docs:
+        assert doc["latex_source"].strip() != ""
+        assert "\\documentclass" in doc["latex_source"]
+
+
+@pytest.mark.asyncio
+async def test_create_application_uses_settings_templates(client, isolated_db):
+    """Auto-created docs should use templates from settings when available."""
+    custom_cv = "\\documentclass{article}\\begin{document}Custom CV\\end{document}"
+    custom_cl = "\\documentclass{letter}\\begin{document}Custom CL\\end{document}"
+    _db_module.set_setting("cv_latex_template", custom_cv, db_path=isolated_db)
+    _db_module.set_setting("cover_letter_latex_template", custom_cl, db_path=isolated_db)
+    resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "Tpl Co", "position": "Eng"},
+    )
+    assert resp.status_code == 201
+    app_id = resp.json()["id"]
+    docs_resp = await client.get(f"/api/v1/applications/{app_id}/documents")
+    docs = docs_resp.json()
+    by_type = {d["doc_type"]: d for d in docs}
+    assert by_type["cv"]["latex_source"] == custom_cv
+    assert by_type["cover_letter"]["latex_source"] == custom_cl
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_auto_creates_documents(client):
+    """POST /applications/from-url should auto-create CV and Cover Letter documents."""
+    extracted = {"company": "Acme", "position": "Dev"}
+    with patch("jam.server._fetch_page_text", return_value=("x" * 200, "html")), \
+         patch("jam.server.extract_job_info", return_value=extracted), \
+         patch("jam.server.ingest_url", return_value=None):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/job"},
+        )
+    assert resp.status_code == 201
+    app_id = resp.json()["application"]["id"]
+    docs_resp = await client.get(f"/api/v1/applications/{app_id}/documents")
+    docs = docs_resp.json()
+    assert len(docs) == 2
+    doc_types = {d["doc_type"] for d in docs}
+    assert doc_types == {"cv", "cover_letter"}
+
+
+@pytest.mark.asyncio
+async def test_list_applications_after_create(client):
+    """GET /applications should list created applications."""
+    # Create two applications
+    resp1 = await client.post(
+        "/api/v1/applications",
+        json={"company": "Google", "position": "Engineer"},
+    )
+    app1_id = resp1.json()["id"]
+    
+    resp2 = await client.post(
+        "/api/v1/applications",
+        json={"company": "Microsoft", "position": "Manager"},
+    )
+    app2_id = resp2.json()["id"]
+    
+    # List all
+    resp = await client.get("/api/v1/applications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    companies = {app["company"] for app in data}
+    assert companies == {"Google", "Microsoft"}
+
+
+@pytest.mark.asyncio
+async def test_get_application(client):
+    """GET /applications/{id} should return the application."""
+    # Create
+    create_resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "Apple", "position": "Engineer"},
+    )
+    app_id = create_resp.json()["id"]
+    
+    # Get
+    resp = await client.get(f"/api/v1/applications/{app_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == app_id
+    assert data["company"] == "Apple"
+    assert data["position"] == "Engineer"
+
+
+@pytest.mark.asyncio
+async def test_get_application_not_found(client):
+    """GET /applications/{id} should return 404 for missing app."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.get(f"/api/v1/applications/{fake_id}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_application(client):
+    """PUT /applications/{id} should update the application."""
+    # Create
+    create_resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Facebook",
+            "position": "Junior Engineer",
+            "status": "applied",
+        },
+    )
+    app_id = create_resp.json()["id"]
+    
+    # Update
+    resp = await client.put(
+        f"/api/v1/applications/{app_id}",
+        json={
+            "position": "Senior Engineer",
+            "status": "interviewing",
+            "notes": "Phone screen passed",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == app_id
+    assert data["company"] == "Facebook"  # unchanged
+    assert data["position"] == "Senior Engineer"  # changed
+    assert data["status"] == "interviewing"  # changed
+    assert data["notes"] == "Phone screen passed"  # changed
+    # created_at should be unchanged, updated_at should be newer
+    create_data = create_resp.json()
+    assert data["created_at"] == create_data["created_at"]
+    assert data["updated_at"] > create_data["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_update_application_partial(client):
+    """PUT /applications/{id} with partial fields."""
+    create_resp = await client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Tesla",
+            "position": "Engineer",
+            "notes": "Original notes",
+        },
+    )
+    app_id = create_resp.json()["id"]
+    
+    # Update only status
+    resp = await client.put(
+        f"/api/v1/applications/{app_id}",
+        json={"status": "rejected"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["company"] == "Tesla"  # unchanged
+    assert data["notes"] == "Original notes"  # unchanged
+    assert data["status"] == "rejected"  # changed
+
+
+@pytest.mark.asyncio
+async def test_update_application_not_found(client):
+    """PUT /applications/{id} should return 404 for missing app."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.put(
+        f"/api/v1/applications/{fake_id}",
+        json={"status": "accepted"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_application(client):
+    """DELETE /applications/{id} should remove the application."""
+    # Create
+    create_resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "Netflix", "position": "Engineer"},
+    )
+    app_id = create_resp.json()["id"]
+    
+    # Verify it exists
+    get_resp = await client.get(f"/api/v1/applications/{app_id}")
+    assert get_resp.status_code == 200
+    
+    # Delete
+    resp = await client.delete(f"/api/v1/applications/{app_id}")
+    assert resp.status_code == 204
+    
+    # Verify it's gone
+    get_resp = await client.get(f"/api/v1/applications/{app_id}")
+    assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_application_not_found(client):
+    """DELETE /applications/{id} should return 404 for missing app."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.delete(f"/api/v1/applications/{fake_id}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_application_status_enum(client):
+    """Test all valid application statuses."""
+    statuses = [
+        "applied",
+        "screening",
+        "interviewing",
+        "offered",
+        "rejected",
+        "accepted",
+        "withdrawn",
+    ]
+    
+    for status in statuses:
+        resp = await client.post(
+            "/api/v1/applications",
+            json={
+                "company": f"Company-{status}",
+                "position": "Role",
+                "status": status,
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["status"] == status
+
+
+@pytest.mark.asyncio
+async def test_catalog_endpoint(client):
+    """GET /catalog should return providers list."""
+    resp = await client.get("/api/v1/catalog")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "providers" in data
+    assert isinstance(data["providers"], list)
+
+
+@pytest.mark.asyncio
+async def test_get_settings_empty(client):
+    """GET /settings should return masked key flags when no settings stored."""
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["openai_api_key_set"] is False
+    assert data["anthropic_api_key_set"] is False
+    assert data["groq_api_key_set"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_settings_with_stored_values(client, isolated_db):
+    """GET /settings should show key_set=True and plain keys when stored."""
+    _db_module.set_setting("openai_api_key", "sk-abc", db_path=isolated_db)
+    _db_module.set_setting("llm_provider", "openai", db_path=isolated_db)
+    _db_module.set_setting("llm_model", "gpt-4o", db_path=isolated_db)
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["openai_api_key_set"] is True
+    assert data["anthropic_api_key_set"] is False
+    assert data["llm_provider"] == "openai"
+    assert data["llm_model"] == "gpt-4o"
+    # Raw key must NOT be in response
+    assert "openai_api_key" not in data
+
+
+@pytest.mark.asyncio
+async def test_save_settings_success(client):
+    """POST /settings should persist provided keys and return saved list."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"llm_provider": "anthropic", "llm_model": "claude-sonnet-4-6"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert set(data["saved"]) == {"llm_provider", "llm_model"}
+
+
+@pytest.mark.asyncio
+async def test_save_settings_empty_body(client):
+    """POST /settings with no fields should return 422."""
+    resp = await client.post("/api/v1/settings", json={})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_save_settings_sets_env(client):
+    """POST /settings should set corresponding environment variables."""
+    import os
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"llm_provider": "groq"},
+    )
+    assert resp.status_code == 200
+    assert os.environ.get("LLM_PROVIDER") == "groq"
+
+
+@pytest.mark.asyncio
+async def test_save_and_get_template_settings(client):
+    """POST /settings with templates should persist and GET should return them."""
+    cv_tpl = "\\documentclass{article}\\begin{document}CV\\end{document}"
+    cl_tpl = "\\documentclass{letter}\\begin{document}CL\\end{document}"
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"cv_latex_template": cv_tpl, "cover_letter_latex_template": cl_tpl},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert "cv_latex_template" in data["saved"]
+    assert "cover_letter_latex_template" in data["saved"]
+
+
+@pytest.mark.asyncio
+async def test_get_settings_returns_templates(client, isolated_db):
+    """GET /settings should include template fields when stored."""
+    _db_module.set_setting("cv_latex_template", "tpl-cv", db_path=isolated_db)
+    _db_module.set_setting("cover_letter_latex_template", "tpl-cl", db_path=isolated_db)
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cv_latex_template"] == "tpl-cv"
+    assert data["cover_letter_latex_template"] == "tpl-cl"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_batch_is_atomic(client):
+    """If set_settings_batch raises, the error propagates (nothing partially saved)."""
+    import pytest as _pytest
+    with patch("jam.server.set_settings_batch", side_effect=Exception("db error")):
+        with _pytest.raises(Exception, match="db error"):
+            await client.post(
+                "/api/v1/settings",
+                json={"llm_provider": "openai", "llm_model": "gpt-4o"},
+            )
+
+
+# --- POST /applications/from-url ---
+
+@pytest.mark.asyncio
+async def test_import_from_url_success(client):
+    """POST /applications/from-url should create an application from a URL."""
+    extracted = {
+        "company": "Acme Corp",
+        "position": "Backend Engineer",
+        "location": "Remote",
+        "salary_range": "$120k-$150k",
+        "requirements": "Python, FastAPI",
+        "description": "Great role",
+        "opening_date": "2026-03-01",
+        "closing_date": "2026-04-15",
+    }
+    page_text = "x" * 200
+    with patch("jam.server._fetch_page_text", return_value=(page_text, "html")) as mock_fetch, \
+         patch("jam.server.extract_job_info", return_value=extracted) as mock_llm, \
+         patch("jam.server.ingest_url", return_value=None) as mock_kb:
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://acme.example.com/jobs/1"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["application"]["company"] == "Acme Corp"
+    assert data["application"]["position"] == "Backend Engineer"
+    assert data["application"]["url"] == "https://acme.example.com/jobs/1"
+    assert data["application"]["status"] == "not_applied_yet"
+    assert data["application"]["location"] == "Remote"
+    assert data["application"]["salary_range"] == "$120k-$150k"
+    assert data["application"]["opening_date"] == "2026-03-01"
+    assert data["application"]["closing_date"] == "2026-04-15"
+    assert data["application"]["description"] == "Great role"
+    assert data["application"]["full_text"] == page_text
+    assert data["extraction"] == extracted
+    assert data["kb_ingested"] is True
+    mock_fetch.assert_awaited_once_with("https://acme.example.com/jobs/1")
+    mock_llm.assert_awaited_once()
+    mock_kb.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_kb_down_still_succeeds(client):
+    """POST /applications/from-url should succeed even when kb ingest fails."""
+    extracted = {"company": "Startup", "position": "Fullstack Dev"}
+    with patch("jam.server._fetch_page_text", return_value=("x" * 200, "html")), \
+         patch("jam.server.extract_job_info", return_value=extracted), \
+         patch("jam.server.ingest_url", side_effect=Exception("kb is down")):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://startup.example.com/jobs/2"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kb_ingested"] is False
+    assert data["application"]["company"] == "Startup"
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_fetch_failure_returns_422(client):
+    """POST /applications/from-url should return 422 when URL fetch fails."""
+    import httpx as _httpx
+    with patch("jam.server._fetch_page_text", side_effect=_httpx.HTTPError("connection refused")):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://unreachable.example.com/"},
+        )
+    assert resp.status_code == 422
+    assert "Failed to fetch URL" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_short_content_returns_422(client):
+    """POST /applications/from-url should return 422 when page content is too short."""
+    with patch("jam.server._fetch_page_text", return_value=("too short", "html")):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/empty"},
+        )
+    assert resp.status_code == 422
+    assert "too short" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_llm_failure_returns_502(client):
+    """POST /applications/from-url should return 502 when LLM extraction fails."""
+    with patch("jam.server._fetch_page_text", return_value=("x" * 200, "html")), \
+         patch("jam.server.extract_job_info", side_effect=RuntimeError("LLM timeout")):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/jobs/3"},
+        )
+    assert resp.status_code == 502
+    assert "LLM extraction failed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_missing_llm_fields_use_unknown(client):
+    """POST /applications/from-url should fall back to 'Unknown' for missing company/position."""
+    extracted = {}
+    with patch("jam.server._fetch_page_text", return_value=("x" * 200, "html")), \
+         patch("jam.server.extract_job_info", return_value=extracted), \
+         patch("jam.server.ingest_url", return_value=None):
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/jobs/4"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["application"]["company"] == "Unknown"
+    assert data["application"]["position"] == "Unknown"
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_empty_url_returns_422(client):
+    """POST /applications/from-url with empty url should fail validation."""
+    resp = await client.post(
+        "/api/v1/applications/from-url",
+        json={"url": ""},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_pdf_uses_ingest_text(client):
+    """POST /applications/from-url with PDF should call ingest_text, not ingest_url."""
+    extracted = {
+        "company": "Tech Corp",
+        "position": "Senior Engineer",
+        "location": "NYC",
+    }
+    with patch("jam.server._fetch_page_text", return_value=("PDF content here " * 5, "pdf")) as mock_fetch, \
+         patch("jam.server.extract_job_info", return_value=extracted) as mock_llm, \
+         patch("jam.server.ingest_text", return_value=None) as mock_kb_text, \
+         patch("jam.server.ingest_url") as mock_kb_url:
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/job.pdf"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["application"]["company"] == "Tech Corp"
+    assert data["kb_ingested"] is True
+    # Verify ingest_text was called, not ingest_url
+    mock_kb_text.assert_awaited_once()
+    mock_kb_url.assert_not_awaited()
+    # Verify it passed the extracted text and URL
+    call_args = mock_kb_text.call_args
+    assert "PDF content here" in call_args[0][0]  # text arg
+    assert "https://example.com/job.pdf" in call_args[0][1]  # url arg
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_text_uses_ingest_text(client):
+    """POST /applications/from-url with plain text should call ingest_text."""
+    extracted = {
+        "company": "Startup Inc",
+        "position": "Full Stack Dev",
+    }
+    with patch("jam.server._fetch_page_text", return_value=("Plain text job posting " * 5, "text")) as mock_fetch, \
+         patch("jam.server.extract_job_info", return_value=extracted), \
+         patch("jam.server.ingest_text", return_value=None) as mock_kb_text, \
+         patch("jam.server.ingest_url") as mock_kb_url:
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/job.txt"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kb_ingested"] is True
+    # Verify ingest_text was called, not ingest_url
+    mock_kb_text.assert_awaited_once()
+    mock_kb_url.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_import_from_url_html_uses_ingest_url(client):
+    """POST /applications/from-url with HTML should call ingest_url, not ingest_text."""
+    extracted = {
+        "company": "Web Co",
+        "position": "Frontend Dev",
+    }
+    with patch("jam.server._fetch_page_text", return_value=("<html>job posting</html>" * 5, "html")) as mock_fetch, \
+         patch("jam.server.extract_job_info", return_value=extracted), \
+         patch("jam.server.ingest_url", return_value=None) as mock_kb_url, \
+         patch("jam.server.ingest_text") as mock_kb_text:
+        resp = await client.post(
+            "/api/v1/applications/from-url",
+            json={"url": "https://example.com/job"},
+        )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kb_ingested"] is True
+    # Verify ingest_url was called, not ingest_text
+    mock_kb_url.assert_awaited_once()
+    mock_kb_text.assert_not_awaited()
+
+
+# --- Document endpoints ---
+
+async def _create_test_app(client):
+    """Helper: create an application and return its ID."""
+    resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "TestCo", "position": "Engineer"},
+    )
+    return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_create_document(client):
+    app_id = await _create_test_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "title": "My CV", "latex_source": "\\documentclass{article}"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["doc_type"] == "cv"
+    assert data["title"] == "My CV"
+    assert data["latex_source"] == "\\documentclass{article}"
+    assert data["application_id"] == app_id
+    assert data["id"]
+
+
+@pytest.mark.asyncio
+async def test_create_document_cover_letter(client):
+    app_id = await _create_test_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cover_letter", "title": "My CL"},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["doc_type"] == "cover_letter"
+
+
+@pytest.mark.asyncio
+async def test_create_document_invalid_app(client):
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.post(
+        f"/api/v1/applications/{fake_id}/documents",
+        json={"doc_type": "cv", "title": "Test"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_documents(client):
+    app_id = await _create_test_app(client)
+    # 2 auto-created (CV + Cover Letter) + 2 manually created = 4
+    await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "title": "CV 1"},
+    )
+    await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cover_letter", "title": "CL 1"},
+    )
+    resp = await client.get(f"/api/v1/applications/{app_id}/documents")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 4
+
+
+@pytest.mark.asyncio
+async def test_list_documents_filter_by_type(client):
+    app_id = await _create_test_app(client)
+    # 1 auto-created CV + 1 manually created CV = 2 CVs
+    await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "title": "CV 1"},
+    )
+    await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cover_letter", "title": "CL 1"},
+    )
+    resp = await client.get(
+        f"/api/v1/applications/{app_id}/documents?doc_type=cv"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert all(d["doc_type"] == "cv" for d in data)
+
+
+@pytest.mark.asyncio
+async def test_list_documents_invalid_app(client):
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    resp = await client.get(f"/api/v1/applications/{fake_id}/documents")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_document(client):
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "title": "My CV"},
+    )
+    doc_id = create_resp.json()["id"]
+    resp = await client.get(f"/api/v1/documents/{doc_id}")
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "My CV"
+
+
+@pytest.mark.asyncio
+async def test_get_document_not_found(client):
+    resp = await client.get("/api/v1/documents/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_document(client):
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "title": "Old Title"},
+    )
+    doc_id = create_resp.json()["id"]
+    resp = await client.put(
+        f"/api/v1/documents/{doc_id}",
+        json={"title": "New Title", "latex_source": "new src"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "New Title"
+    assert data["latex_source"] == "new src"
+
+
+@pytest.mark.asyncio
+async def test_update_document_not_found(client):
+    resp = await client.put(
+        "/api/v1/documents/nonexistent",
+        json={"title": "X"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_document(client):
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv"},
+    )
+    doc_id = create_resp.json()["id"]
+    resp = await client.delete(f"/api/v1/documents/{doc_id}")
+    assert resp.status_code == 204
+    get_resp = await client.get(f"/api/v1/documents/{doc_id}")
+    assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_document_not_found(client):
+    resp = await client.delete("/api/v1/documents/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_compile_document_no_tectonic(client):
+    """Compile should return 503 when tectonic is not installed."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
+    )
+    doc_id = create_resp.json()["id"]
+    with patch("jam.server.shutil.which", return_value=None):
+        resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
+    assert resp.status_code == 503
+    assert "tectonic" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_compile_document_empty_source(client):
+    """Compile should return 422 when LaTeX source is empty."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": ""},
+    )
+    doc_id = create_resp.json()["id"]
+    resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_compile_document_success(client):
+    """Compile should return PDF bytes and create a version."""
+    import asyncio
+
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
+    )
+    doc_id = create_resp.json()["id"]
+
+    fake_pdf = b"%PDF-1.4 fake pdf content"
+
+    async def fake_subprocess(*args, **kwargs):
+        # Write a fake PDF file
+        cwd = kwargs.get("cwd", ".")
+        import os
+        pdf_path = os.path.join(cwd, "document.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(fake_pdf)
+        proc = MagicMock()
+        proc.returncode = 0
+
+        async def communicate():
+            return b"", b""
+        proc.communicate = communicate
+        return proc
+
+    with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+        resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content == fake_pdf
+
+    # Verify a version was created
+    ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
+    assert ver_resp.status_code == 200
+    versions = ver_resp.json()
+    assert len(versions) == 1
+    assert versions[0]["version_number"] == 1
+
+
+@pytest.mark.asyncio
+async def test_compile_document_failure(client):
+    """Compile should return 422 when tectonic fails."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "bad latex"},
+    )
+    doc_id = create_resp.json()["id"]
+
+    async def fake_subprocess(*args, **kwargs):
+        proc = MagicMock()
+        proc.returncode = 1
+        async def communicate():
+            return b"", b"error: undefined control sequence"
+        proc.communicate = communicate
+        return proc
+
+    with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+        resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
+    assert resp.status_code == 422
+    assert "compilation failed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_list_versions(client):
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "src"},
+    )
+    doc_id = create_resp.json()["id"]
+    # No versions yet
+    resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_versions_not_found(client):
+    resp = await client.get("/api/v1/documents/nonexistent/versions")
+    assert resp.status_code == 404
+
+
+# ── Compile version endpoint tests ──────────────────────────────────────────
+
+
+async def _create_version_via_compile(client, doc_id):
+    """Helper: compile a document (mocked) to create a version snapshot."""
+    fake_pdf = b"%PDF-1.4 fake pdf content"
+
+    async def fake_subprocess(*args, **kwargs):
+        import os
+        cwd = kwargs.get("cwd", ".")
+        with open(os.path.join(cwd, "document.pdf"), "wb") as f:
+            f.write(fake_pdf)
+        proc = MagicMock()
+        proc.returncode = 0
+        async def communicate():
+            return b"", b""
+        proc.communicate = communicate
+        return proc
+
+    with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+        resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
+    assert resp.status_code == 200
+    return fake_pdf
+
+
+@pytest.mark.asyncio
+async def test_compile_version_not_found(client):
+    resp = await client.post("/api/v1/documents/versions/nonexistent/compile")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_compile_version_empty_source(client, isolated_db):
+    """Version with empty LaTeX should return 422."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "some latex"},
+    )
+    doc_id = create_resp.json()["id"]
+
+    # Compile to create a version
+    await _create_version_via_compile(client, doc_id)
+
+    # Manually create a version with empty source via the DB (using test db_path)
+    from jam.db import create_version as db_create_version_fn
+    ver = db_create_version_fn(document_id=doc_id, latex_source="", prompt_text="", db_path=isolated_db)
+
+    resp = await client.post(f"/api/v1/documents/versions/{ver['id']}/compile")
+    assert resp.status_code == 422
+    assert "empty" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_compile_version_no_tectonic(client):
+    """Should return 503 when tectonic is not installed."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
+    )
+    doc_id = create_resp.json()["id"]
+    await _create_version_via_compile(client, doc_id)
+
+    ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
+    version_id = ver_resp.json()[0]["id"]
+
+    with patch("jam.server.shutil.which", return_value=None):
+        resp = await client.post(f"/api/v1/documents/versions/{version_id}/compile")
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_compile_version_success(client):
+    """Compile a version should return PDF bytes."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
+    )
+    doc_id = create_resp.json()["id"]
+    fake_pdf = await _create_version_via_compile(client, doc_id)
+
+    ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
+    version_id = ver_resp.json()[0]["id"]
+
+    async def fake_subprocess(*args, **kwargs):
+        import os
+        cwd = kwargs.get("cwd", ".")
+        with open(os.path.join(cwd, "document.pdf"), "wb") as f:
+            f.write(fake_pdf)
+        proc = MagicMock()
+        proc.returncode = 0
+        async def communicate():
+            return b"", b""
+        proc.communicate = communicate
+        return proc
+
+    with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+        resp = await client.post(f"/api/v1/documents/versions/{version_id}/compile")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content == fake_pdf
+
+
+@pytest.mark.asyncio
+async def test_compile_version_failure(client):
+    """Compile version should return 422 when tectonic fails."""
+    app_id = await _create_test_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/documents",
+        json={"doc_type": "cv", "latex_source": "bad latex"},
+    )
+    doc_id = create_resp.json()["id"]
+    await _create_version_via_compile(client, doc_id)
+
+    ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
+    version_id = ver_resp.json()[0]["id"]
+
+    async def fake_subprocess(*args, **kwargs):
+        proc = MagicMock()
+        proc.returncode = 1
+        async def communicate():
+            return b"", b"error: undefined control sequence"
+        proc.communicate = communicate
+        return proc
+
+    with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+        resp = await client.post(f"/api/v1/documents/versions/{version_id}/compile")
+    assert resp.status_code == 422
+    assert "compilation failed" in resp.json()["detail"]
+
+
+# ── Default templates endpoint tests ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_default_templates(client):
+    """GET /templates/defaults should return both built-in templates."""
+    resp = await client.get("/api/v1/templates/defaults")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "cv" in data
+    assert "cover_letter" in data
+    assert "\\documentclass" in data["cv"]
+    assert "\\documentclass" in data["cover_letter"]
+
+
+# ── PDF cache endpoint tests ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_document_pdf_not_found(client):
+    """GET /documents/{doc_id}/pdf returns 404 when nothing compiled."""
+    response = await client.get("/api/v1/documents/nonexistent-doc/pdf")
+    assert response.status_code == 404
+    assert "No compiled PDF available" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_get_document_pdf_after_compile(client):
+    """GET /documents/{doc_id}/pdf returns cached PDF after compile."""
+    from jam import server
+    
+    doc_id = "test-doc-123"
+    fake_pdf = b"PDF mock content"
+    server._pdf_cache[doc_id] = fake_pdf
+    
+    response = await client.get(f"/api/v1/documents/{doc_id}/pdf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content == fake_pdf
+
+
+def test_html_page_instruction_regex_patterns():
+    """JS regex patterns for \\section and \\paragraph must be correctly escaped.
+
+    Catches Python-escaping mistakes that would produce the wrong regex in the
+    browser (e.g. \\\\section vs \\section vs section).
+    """
+    # CV: emits \\section in JS source → regex matches literal \section in LaTeX
+    assert r'\\section\{' in HTML_PAGE, (
+        r"CV regex pattern '\\section\{' not found in HTML_PAGE — "
+        "check Python escaping of the \\section regex in _buildInstructionsFromLatex"
+    )
+    # Cover letter: emits \\paragraph in JS source → regex matches literal \paragraph
+    assert r'\\paragraph\{' in HTML_PAGE, (
+        r"Cover letter regex pattern '\\paragraph\{' not found in HTML_PAGE — "
+        "check Python escaping of the \\paragraph regex in _buildInstructionsFromLatex"
+    )
+
+
+def test_html_page_no_multiline_js_regex_literals():
+    """
+    Detect JS regex literals that contain actual newline characters.
+
+    This class of bug arises when Python's \\n (or \\n\\n etc.) inside a
+    triple-quoted HTML_PAGE string becomes a real newline embedded in a JS
+    regex literal, causing browsers to throw:
+        Uncaught SyntaxError: Invalid regular expression: missing /
+
+    The test scans for the pattern  = /…<newline>  or  fn(/…<newline>
+    which are the common contexts where an unclosed regex literal would appear.
+    """
+    bad = re.findall(
+        r'(?:\.split|\.match|\.replace|\.search|\.test|[=(,])\s*/(?!/)[^\n/]*\n',
+        HTML_PAGE,
+    )
+    assert not bad, (
+        "JS regex literal(s) in HTML_PAGE contain actual newline characters "
+        "(browser syntax error 'missing /').  Escape \\n as \\\\n in the "
+        f"Python source string.\nOffending snippets: {bad}"
+    )

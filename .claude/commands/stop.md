@@ -6,7 +6,8 @@ Stop the job application manager server.
 
 ### 1. Find and kill the process
 ```bash
-pkill -f "uvicorn jam.server:app" 2>/dev/null
+pkill -f "scripts/serve.py" 2>/dev/null
+pkill -f "jam.server:app" 2>/dev/null
 ```
 
 ### 2. Verify
