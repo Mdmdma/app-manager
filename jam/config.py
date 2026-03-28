@@ -20,3 +20,13 @@ class Settings:
     # LaTeX template defaults
     cv_latex_template: str = field(default_factory=lambda: os.getenv("JAM_CV_LATEX_TEMPLATE", ""))
     cover_letter_latex_template: str = field(default_factory=lambda: os.getenv("JAM_COVER_LETTER_LATEX_TEMPLATE", ""))
+    # Gmail OAuth settings
+    gmail_client_id: str = field(default_factory=lambda: os.getenv("GMAIL_CLIENT_ID", ""))
+    gmail_client_secret: str = field(default_factory=lambda: os.getenv("GMAIL_CLIENT_SECRET", ""))
+    gmail_refresh_token: str = field(default_factory=lambda: os.getenv("GMAIL_REFRESH_TOKEN", ""))
+    gmail_user_email: str = field(default_factory=lambda: os.getenv("GMAIL_USER_EMAIL", ""))
+    # KB retrieval settings
+    kb_retrieval_namespaces: str = field(default_factory=lambda: os.getenv("JAM_KB_RETRIEVAL_NAMESPACES", ""))
+    kb_retrieval_n_results: int = field(default_factory=lambda: int(os.getenv("JAM_KB_RETRIEVAL_N_RESULTS", "5")))
+    kb_retrieval_padding: int = field(default_factory=lambda: int(os.getenv("JAM_KB_RETRIEVAL_PADDING", "0")))
+    kb_include_namespaces: str = field(default_factory=lambda: os.getenv("JAM_KB_INCLUDE_NAMESPACES", ""))

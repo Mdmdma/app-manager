@@ -18,5 +18,8 @@
     "48": "icons/icon48.png"
   },
   "permissions": ["activeTab"],
-  "host_permissions": ["http://localhost:8001/*"]
+  "host_permissions": ["http://localhost:8001/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; connect-src http://localhost:8001"
+  }
 }

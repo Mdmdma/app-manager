@@ -31,6 +31,67 @@ async def _ensure_namespace(base_url: str, client: httpx.AsyncClient) -> None:
     )
 
 
+async def search_documents(
+    query: str,
+    n_results: int = 5,
+    namespace_ids: list[str] | None = None,
+    settings: Settings | None = None,
+) -> list[dict]:
+    """Search the KB for documents relevant to *query*.
+
+    Returns a list of result dicts, each expected to contain at minimum
+    ``content`` and ``source`` keys.  Degrades gracefully to an empty list
+    if the KB is unavailable or returns 404.
+
+    *namespace_ids* filters the search to the given namespaces.  When
+    ``None``, the KB searches all namespaces.
+    """
+    settings = settings or Settings()
+    base_url = settings.kb_api_url.rstrip("/")
+    body: dict = {"query": query, "top_k": n_results}
+    if namespace_ids:
+        body["namespace_ids"] = namespace_ids
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(f"{base_url}/search", json=body)
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        return []
+    if isinstance(data, list):
+        return data
+    return data.get("results", [])
+
+
+async def list_namespace_documents(
+    namespace_ids: list[str],
+    settings: Settings | None = None,
+) -> list[dict]:
+    """Fetch all documents belonging to the given namespaces.
+
+    Used by the generation loop for the "include entire namespaces" feature.
+    Degrades gracefully to an empty list on errors.
+    """
+    settings = settings or Settings()
+    base_url = settings.kb_api_url.rstrip("/")
+    params: list[tuple[str, str]] = [
+        ("namespace_id", ns) for ns in namespace_ids
+    ]
+    params.append(("limit", "200"))
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{base_url}/documents", params=params)
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception:
+        return []
+    return data.get("documents", [])
+
+
 async def ingest_url(url: str, settings: Settings | None = None) -> dict:
     """Ingest a URL into the kb knowledge base under the job-applications namespace.
 

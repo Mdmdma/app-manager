@@ -8,7 +8,11 @@ def test_defaults(monkeypatch):
     for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GROQ_API_KEY",
                 "OLLAMA_BASE_URL", "LLM_PROVIDER", "LLM_MODEL",
                 "JAM_KB_API_URL", "JAM_PORT",
-                "JAM_CV_LATEX_TEMPLATE", "JAM_COVER_LETTER_LATEX_TEMPLATE"):
+                "JAM_CV_LATEX_TEMPLATE", "JAM_COVER_LETTER_LATEX_TEMPLATE",
+                "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET",
+                "GMAIL_REFRESH_TOKEN", "GMAIL_USER_EMAIL",
+                "JAM_KB_RETRIEVAL_NAMESPACES", "JAM_KB_RETRIEVAL_N_RESULTS",
+                "JAM_KB_RETRIEVAL_PADDING", "JAM_KB_INCLUDE_NAMESPACES"):
         monkeypatch.delenv(var, raising=False)
     s = Settings()
     assert s.kb_api_url == "http://localhost:8000/api/v1"
@@ -21,6 +25,14 @@ def test_defaults(monkeypatch):
     assert s.llm_model == "gpt-4o"
     assert s.cv_latex_template == ""
     assert s.cover_letter_latex_template == ""
+    assert s.gmail_client_id == ""
+    assert s.gmail_client_secret == ""
+    assert s.gmail_refresh_token == ""
+    assert s.gmail_user_email == ""
+    assert s.kb_retrieval_namespaces == ""
+    assert s.kb_retrieval_n_results == 5
+    assert s.kb_retrieval_padding == 0
+    assert s.kb_include_namespaces == ""
 
 
 def test_env_overrides(monkeypatch):
@@ -46,3 +58,21 @@ def test_env_overrides(monkeypatch):
     assert s.llm_model == "claude-3-5-sonnet-20241022"
     assert s.cv_latex_template == "\\documentclass{article}"
     assert s.cover_letter_latex_template == "\\documentclass{letter}"
+    monkeypatch.setenv("GMAIL_CLIENT_ID", "test-client-id")
+    monkeypatch.setenv("GMAIL_CLIENT_SECRET", "test-client-secret")
+    monkeypatch.setenv("GMAIL_REFRESH_TOKEN", "test-refresh-token")
+    monkeypatch.setenv("GMAIL_USER_EMAIL", "user@example.com")
+    s2 = Settings()
+    assert s2.gmail_client_id == "test-client-id"
+    assert s2.gmail_client_secret == "test-client-secret"
+    assert s2.gmail_refresh_token == "test-refresh-token"
+    assert s2.gmail_user_email == "user@example.com"
+    monkeypatch.setenv("JAM_KB_RETRIEVAL_NAMESPACES", '["ns-1","ns-2"]')
+    monkeypatch.setenv("JAM_KB_RETRIEVAL_N_RESULTS", "10")
+    monkeypatch.setenv("JAM_KB_RETRIEVAL_PADDING", "2")
+    monkeypatch.setenv("JAM_KB_INCLUDE_NAMESPACES", '["ns-3"]')
+    s3 = Settings()
+    assert s3.kb_retrieval_namespaces == '["ns-1","ns-2"]'
+    assert s3.kb_retrieval_n_results == 10
+    assert s3.kb_retrieval_padding == 2
+    assert s3.kb_include_namespaces == '["ns-3"]'

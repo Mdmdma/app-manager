@@ -292,6 +292,16 @@ HTML_PAGE = """<!DOCTYPE html>
     background: #b91c1c;
   }
 
+  .btn-generate {
+    background: #7c3aed;
+    color: #fff;
+    border: none;
+  }
+
+  .btn-generate:hover {
+    background: #6d28d9;
+  }
+
   .btn:disabled {
     opacity: 0.55;
     cursor: default;
@@ -1078,6 +1088,46 @@ HTML_PAGE = """<!DOCTYPE html>
     cursor: pointer;
   }
   .doc-version-bar button:hover { background: #e5e7eb; }
+  .agent-feedback-panel {
+    padding: 8px 12px;
+    background: #f9fafb;
+    border-top: 1px solid #e5e7eb;
+    font-size: 0.8rem;
+  }
+  .agent-feedback-panel details { margin-bottom: 6px; }
+  .agent-feedback-panel summary {
+    font-weight: 600;
+    cursor: pointer;
+    color: #374151;
+    user-select: none;
+  }
+  .feedback-text {
+    white-space: pre-wrap;
+    color: #4b5563;
+    margin: 4px 0 0 0;
+    font-family: inherit;
+    font-size: 0.78rem;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 4px 8px;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+  }
+  .help-tip {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #e5e7eb;
+    color: #6b7280;
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-align: center;
+    line-height: 15px;
+    cursor: help;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
   .doc-compile-status {
     font-size: 0.8rem;
     color: #6b7280;
@@ -1222,6 +1272,11 @@ HTML_PAGE = """<!DOCTYPE html>
             </button>
           </li>
           <li>
+            <button class="sidebar-menu-btn" data-section="knowledge-base" onclick="switchSettingsSection('knowledge-base')">
+              Knowledge Base
+            </button>
+          </li>
+          <li>
             <button class="sidebar-menu-btn" data-section="ai-models" onclick="switchSettingsSection('ai-models')">
               AI Models
             </button>
@@ -1229,6 +1284,11 @@ HTML_PAGE = """<!DOCTYPE html>
           <li>
             <button class="sidebar-menu-btn" data-section="templates" onclick="switchSettingsSection('templates')">
               Templates
+            </button>
+          </li>
+          <li>
+            <button class="sidebar-menu-btn" data-section="gmail" onclick="switchSettingsSection('gmail')">
+              Email / Gmail
             </button>
           </li>
         </ul>
@@ -1271,6 +1331,46 @@ HTML_PAGE = """<!DOCTYPE html>
           </div>
         </div>
 
+        <!-- Knowledge Base Settings Section -->
+        <div id="section-knowledge-base" class="settings-section">
+          <h2>Knowledge Base</h2>
+          <p style="color:#6b7280; margin-bottom:16px;">Configure which knowledge base content is used when generating CVs and cover letters.</p>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Search Namespaces</label>
+            <p style="color:#9ca3af; font-size:0.8rem; margin-bottom:8px;">Select namespaces to search for relevant chunks during generation.</p>
+            <div id="kb-search-namespaces" style="display:flex; flex-direction:column; gap:6px;">
+              <span style="color:#9ca3af; font-size:0.85rem;">Loading namespaces&hellip;</span>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Retrieved Chunks</label>
+            <p style="color:#9ca3af; font-size:0.8rem; margin-bottom:8px;">Number of relevant chunks to retrieve per search query.</p>
+            <input type="number" id="kb-n-results" class="field-input" min="1" max="50" value="5" style="max-width:120px;">
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Padding</label>
+            <p style="color:#9ca3af; font-size:0.8rem; margin-bottom:8px;">Number of surrounding chunks to include around each result for additional context.</p>
+            <input type="number" id="kb-padding" class="field-input" min="0" max="10" value="0" style="max-width:120px;">
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Include Entire Namespaces</label>
+            <p style="color:#9ca3af; font-size:0.8rem; margin-bottom:8px;">Select namespaces whose full content will be included in every generation (not just search results).</p>
+            <div id="kb-include-namespaces" style="display:flex; flex-direction:column; gap:6px;">
+              <span style="color:#9ca3af; font-size:0.85rem;">Loading namespaces&hellip;</span>
+            </div>
+          </div>
+
+          <div id="kb-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
+          <div style="display:flex; gap:8px; margin-top:16px;">
+            <button class="btn btn-primary" onclick="saveKbSettings()">Save Knowledge Base Settings</button>
+            <button class="btn" style="background:#6b7280;" onclick="testKbRetrieval()">Test Retrieval</button>
+          </div>
+        </div>
+
         <!-- AI Models Settings Section -->
         <div id="section-ai-models" class="settings-section">
           <h2>AI Models</h2>
@@ -1309,6 +1409,42 @@ HTML_PAGE = """<!DOCTYPE html>
 
           <div id="template-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
           <button class="btn btn-primary" style="margin-top:16px;" onclick="saveTemplateSettings()">Save Templates</button>
+        </div>
+
+        <!-- Email / Gmail Settings Section -->
+        <div id="section-gmail" class="settings-section">
+          <h2>Email / Gmail</h2>
+          <p style="color:#6b7280; margin-bottom:16px;">Connect your Gmail account to read and compose emails for job applications.</p>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Status</label>
+            <div class="setting-value">
+              <span class="connection-dot disconnected" id="gmail-status-dot" style="display:inline-block;"></span>
+              <span id="gmail-status-text">Not connected</span>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Client ID</label>
+            <input type="text" id="gmail-client-id" class="field-input" placeholder="123456789-abc.apps.googleusercontent.com">
+          </div>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Client Secret</label>
+            <div style="position:relative;">
+              <input type="password" id="gmail-client-secret" class="field-input" placeholder="GOCSPX-...">
+              <button type="button" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.75rem;" onclick="toggleGmailSecret(this)">show</button>
+            </div>
+          </div>
+
+          <p style="color:#6b7280; margin-bottom:16px; font-size:0.875rem;">Permissions requested: read emails, compose and send emails. Create a project in Google Cloud Console, enable the Gmail API, and create OAuth 2.0 credentials (Web application type) with redirect URI: <code>http://localhost:8001/gmail/callback</code></p>
+
+          <div id="gmail-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:16px;">
+            <button class="btn btn-primary" onclick="saveGmailCredentials()">Save Credentials</button>
+            <button class="btn btn-primary" onclick="connectGmail()">Connect Gmail</button>
+            <button id="gmail-disconnect-btn" class="btn btn-secondary" onclick="disconnectGmail()" style="display:none;">Disconnect</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1437,9 +1573,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <button class="btn btn-sm btn-primary" onclick="_createDoc('cv')">+ New</button>
               <button class="btn btn-sm btn-green" onclick="_saveCurrentDoc('cv')">Save</button>
               <button class="btn btn-sm btn-primary" onclick="_compileDoc('cv')">Compile</button>
+              <button class="btn btn-sm btn-generate" onclick="_generateDoc('cv')">Generate</button>
               <button class="btn btn-sm" id="cv-download-btn" onclick="_downloadPdf('cv')" style="display:none">Download PDF</button>
               <button class="btn btn-sm btn-danger" onclick="_deleteCurrentDoc('cv')">Delete</button>
               <span id="cv-save-status" class="doc-compile-status"></span>
+              <span id="cv-gen-status" class="doc-compile-status"></span>
             </div>
             <div id="cv-trisplit" class="trisplit-container">
               <div class="trisplit-pane" data-pane="0">
@@ -1452,7 +1590,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 </div>
               </div>
               <div class="trisplit-pane" data-pane="1">
-                <div class="trisplit-pane-header"><span>LaTeX Source</span><button onclick="_togglePane('cv-trisplit',1)" title="Collapse/Expand">&#x25C0;&#x25B6;</button></div>
+                <div class="trisplit-pane-header"><span>LaTeX Source <span class="help-tip" title="Add % [COMMENT: your note] anywhere in the source to guide the AI">?</span></span><button onclick="_togglePane('cv-trisplit',1)" title="Collapse/Expand">&#x25C0;&#x25B6;</button></div>
                 <div class="trisplit-pane-body"><textarea id="cv-latex-editor" placeholder="\\documentclass{article}&#10;\\begin{document}&#10;Your content here.&#10;\\end{document}" spellcheck="false"></textarea></div>
               </div>
               <div class="trisplit-pane" data-pane="2">
@@ -1464,6 +1602,12 @@ HTML_PAGE = """<!DOCTYPE html>
               <span>Versions:</span>
               <span id="cv-version-list">--</span>
             </div>
+            <div id="cv-agent-feedback" class="agent-feedback-panel" style="display:none">
+              <details open><summary>Fit Analysis</summary><pre id="cv-fit-feedback" class="feedback-text"></pre></details>
+              <details open><summary>Quality Analysis</summary><pre id="cv-quality-feedback" class="feedback-text"></pre></details>
+              <details><summary>Generation Prompt (System)</summary><pre id="cv-generation-system-prompt" class="feedback-text"></pre></details>
+              <details><summary>Generation Prompt (User Context)</summary><pre id="cv-generation-user-prompt" class="feedback-text"></pre></details>
+            </div>
           </div>
 
           <!-- Cover Letter tab -->
@@ -1473,9 +1617,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <button class="btn btn-sm btn-primary" onclick="_createDoc('cover_letter')">+ New</button>
               <button class="btn btn-sm btn-green" onclick="_saveCurrentDoc('cover_letter')">Save</button>
               <button class="btn btn-sm btn-primary" onclick="_compileDoc('cover_letter')">Compile</button>
+              <button class="btn btn-sm btn-generate" onclick="_generateDoc('cover_letter')">Generate</button>
               <button class="btn btn-sm" id="cover_letter-download-btn" onclick="_downloadPdf('cover_letter')" style="display:none">Download PDF</button>
               <button class="btn btn-sm btn-danger" onclick="_deleteCurrentDoc('cover_letter')">Delete</button>
               <span id="cover_letter-save-status" class="doc-compile-status"></span>
+              <span id="cover_letter-gen-status" class="doc-compile-status"></span>
             </div>
             <div id="cover_letter-trisplit" class="trisplit-container">
               <div class="trisplit-pane" data-pane="0">
@@ -1488,7 +1634,7 @@ HTML_PAGE = """<!DOCTYPE html>
                 </div>
               </div>
               <div class="trisplit-pane" data-pane="1">
-                <div class="trisplit-pane-header"><span>LaTeX Source</span><button onclick="_togglePane('cover_letter-trisplit',1)" title="Collapse/Expand">&#x25C0;&#x25B6;</button></div>
+                <div class="trisplit-pane-header"><span>LaTeX Source <span class="help-tip" title="Add % [COMMENT: your note] anywhere in the source to guide the AI">?</span></span><button onclick="_togglePane('cover_letter-trisplit',1)" title="Collapse/Expand">&#x25C0;&#x25B6;</button></div>
                 <div class="trisplit-pane-body"><textarea id="cover_letter-latex-editor" placeholder="\\documentclass{article}&#10;\\begin{document}&#10;Your content here.&#10;\\end{document}" spellcheck="false"></textarea></div>
               </div>
               <div class="trisplit-pane" data-pane="2">
@@ -1499,6 +1645,12 @@ HTML_PAGE = """<!DOCTYPE html>
             <div id="cover_letter-version-bar" class="doc-version-bar">
               <span>Versions:</span>
               <span id="cover_letter-version-list">--</span>
+            </div>
+            <div id="cover_letter-agent-feedback" class="agent-feedback-panel" style="display:none">
+              <details open><summary>Fit Analysis</summary><pre id="cover_letter-fit-feedback" class="feedback-text"></pre></details>
+              <details open><summary>Quality Analysis</summary><pre id="cover_letter-quality-feedback" class="feedback-text"></pre></details>
+              <details><summary>Generation Prompt (System)</summary><pre id="cover_letter-generation-system-prompt" class="feedback-text"></pre></details>
+              <details><summary>Generation Prompt (User Context)</summary><pre id="cover_letter-generation-user-prompt" class="feedback-text"></pre></details>
             </div>
           </div>
         </div>
@@ -1905,6 +2057,8 @@ function switchToSettings() {
   document.getElementById("detail-view").style.display = "none";
   document.getElementById("settings-view").style.display = "flex";
   loadAiSettings();
+  loadKbSettings();
+  loadGmailSettings();
 }
 
 function switchToDashboard() {
@@ -1935,6 +2089,15 @@ document.addEventListener("DOMContentLoaded", function() {
   const titleSection = document.querySelector("header .title-section");
   titleSection.style.cursor = "pointer";
   titleSection.onclick = switchToDashboard;
+  
+  // Handle URL parameters for OAuth callback
+  const params = new URLSearchParams(window.location.search);
+  const view = params.get("view");
+  const section = params.get("section");
+  if (view === "settings" && section === "gmail") {
+    switchToSettings();
+    switchSettingsSection("gmail");
+  }
 });
 
 // Health check
@@ -2183,6 +2346,302 @@ async function saveTemplateSettings() {
     msgEl.className = "status-msg error";
   }
 }
+
+// ── Knowledge Base settings ──────────────────────────────────────────────────
+
+let _kbNamespaces = [];
+
+async function loadKbSettings() {
+  // Fetch namespaces from KB
+  try {
+    var nsResp = await apiFetch("GET", "/kb/namespaces");
+    _kbNamespaces = await nsResp.json();
+  } catch (e) {
+    _kbNamespaces = [];
+  }
+
+  // Get saved settings
+  var saved = _stored || {};
+  var searchNs = [];
+  var includeNs = [];
+  try { searchNs = JSON.parse(saved.kb_retrieval_namespaces || "[]"); } catch(e) {}
+  try { includeNs = JSON.parse(saved.kb_include_namespaces || "[]"); } catch(e) {}
+
+  // Populate search namespaces checkboxes
+  var searchDiv = document.getElementById("kb-search-namespaces");
+  searchDiv.innerHTML = "";
+  if (_kbNamespaces.length === 0) {
+    searchDiv.innerHTML = '<span style="color:#9ca3af; font-size:0.85rem;">No namespaces found \u2014 is the knowledge base running?</span>';
+  } else {
+    _kbNamespaces.forEach(function(ns) {
+      var id = ns.id || ns;
+      var label = ns.label || ns.id || ns;
+      var checked = searchNs.indexOf(id) !== -1;
+      var row = document.createElement("label");
+      row.style.cssText = "display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.9rem; color:#1a1a2e;";
+      row.innerHTML = '<input type="checkbox" value="' + escapeHtml(id) + '"' + (checked ? ' checked' : '') + ' style="accent-color:#4f46e5;"> ' + escapeHtml(label);
+      searchDiv.appendChild(row);
+    });
+  }
+
+  // Populate include namespaces checkboxes
+  var includeDiv = document.getElementById("kb-include-namespaces");
+  includeDiv.innerHTML = "";
+  if (_kbNamespaces.length === 0) {
+    includeDiv.innerHTML = '<span style="color:#9ca3af; font-size:0.85rem;">No namespaces found \u2014 is the knowledge base running?</span>';
+  } else {
+    _kbNamespaces.forEach(function(ns) {
+      var id = ns.id || ns;
+      var label = ns.label || ns.id || ns;
+      var checked = includeNs.indexOf(id) !== -1;
+      var row = document.createElement("label");
+      row.style.cssText = "display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.9rem; color:#1a1a2e;";
+      row.innerHTML = '<input type="checkbox" value="' + escapeHtml(id) + '"' + (checked ? ' checked' : '') + ' style="accent-color:#4f46e5;"> ' + escapeHtml(label);
+      includeDiv.appendChild(row);
+    });
+  }
+
+  // Set numeric fields
+  var nResults = parseInt(saved.kb_retrieval_n_results) || 5;
+  var padding = parseInt(saved.kb_retrieval_padding) || 0;
+  document.getElementById("kb-n-results").value = nResults;
+  document.getElementById("kb-padding").value = padding;
+}
+
+async function saveKbSettings() {
+  var msgEl = document.getElementById("kb-settings-msg");
+  msgEl.textContent = "Saving...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+
+  // Collect checked search namespaces
+  var searchNs = [];
+  document.querySelectorAll("#kb-search-namespaces input[type=checkbox]:checked").forEach(function(cb) {
+    searchNs.push(cb.value);
+  });
+
+  // Collect checked include namespaces
+  var includeNs = [];
+  document.querySelectorAll("#kb-include-namespaces input[type=checkbox]:checked").forEach(function(cb) {
+    includeNs.push(cb.value);
+  });
+
+  var nResults = parseInt(document.getElementById("kb-n-results").value) || 5;
+  var padding = parseInt(document.getElementById("kb-padding").value) || 0;
+
+  var body = {
+    kb_retrieval_namespaces: JSON.stringify(searchNs),
+    kb_retrieval_n_results: nResults,
+    kb_retrieval_padding: padding,
+    kb_include_namespaces: JSON.stringify(includeNs)
+  };
+
+  try {
+    await apiFetch("POST", "/settings", body);
+    msgEl.textContent = "Knowledge Base settings saved successfully";
+    msgEl.className = "status-msg success";
+    // Update local cache
+    _stored.kb_retrieval_namespaces = body.kb_retrieval_namespaces;
+    _stored.kb_retrieval_n_results = String(nResults);
+    _stored.kb_retrieval_padding = String(padding);
+    _stored.kb_include_namespaces = body.kb_include_namespaces;
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
+async function testKbRetrieval() {
+  var msgEl = document.getElementById("kb-settings-msg");
+  msgEl.textContent = "Testing KB retrieval...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+
+  // Collect checked include namespaces
+  var includeNs = [];
+  var checkboxes = document.querySelectorAll("#kb-include-namespaces input[type='checkbox']:checked");
+  checkboxes.forEach(function(cb) {
+    includeNs.push(cb.value);
+  });
+
+  if (includeNs.length === 0) {
+    msgEl.textContent = "Error: No include namespaces selected. Select at least one.";
+    msgEl.className = "status-msg error";
+    return;
+  }
+
+  try {
+    const resp = await apiFetch("POST", "/kb/test-retrieval", {
+      namespace_ids: includeNs,
+      query: "test"
+    });
+    const result = await resp.json();
+
+    var lines = ["=== Test Results ==="];
+
+    if (result.search_error) {
+      lines.push("Semantic Search: ERROR");
+      lines.push(result.search_error);
+    } else if (result.search_results) {
+      lines.push("Semantic Search: OK - " + result.search_results.length + " results");
+    }
+
+    if (result.list_error) {
+      lines.push("List Documents: ERROR");
+      lines.push(result.list_error);
+    } else if (result.list_results !== null) {
+      lines.push("List Documents: OK - " + result.list_results.length + " documents");
+      if (result.list_results.length === 0) {
+        lines.push("");
+        lines.push("WARNING: Namespace is empty.");
+        lines.push("Import content to the KB first.");
+      }
+    }
+
+    var msg = lines.join(String.fromCharCode(10));
+
+    msgEl.textContent = msg;
+    msgEl.className = result.list_error || result.search_error ? "status-msg error" : "status-msg success";
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
+async function loadGmailSettings() {
+  try {
+    // Load status
+    const statusResp = await apiFetch("GET", "/gmail/status");
+    const status = await statusResp.json();
+
+    // Update status display
+    const dotEl = document.getElementById("gmail-status-dot");
+    const textEl = document.getElementById("gmail-status-text");
+    const disconnectBtn = document.getElementById("gmail-disconnect-btn");
+
+    if (status.connected) {
+      dotEl.className = "connection-dot connected";
+      textEl.textContent = "Connected as " + status.email;
+      disconnectBtn.style.display = "inline-block";
+    } else {
+      dotEl.className = "connection-dot disconnected";
+      textEl.textContent = "Not connected";
+      disconnectBtn.style.display = "none";
+    }
+
+    // Load stored settings
+    const settingsResp = await apiFetch("GET", "/settings");
+    const settings = await settingsResp.json();
+    document.getElementById("gmail-client-id").value = settings.gmail_client_id || "";
+    // client_secret never returned, just show placeholder
+    document.getElementById("gmail-client-secret").value = "";
+  } catch (e) {
+    console.error("Failed to load Gmail settings:", e);
+  }
+}
+
+async function saveGmailCredentials() {
+  const clientId = document.getElementById("gmail-client-id").value.trim();
+  const clientSecret = document.getElementById("gmail-client-secret").value.trim();
+  const msgEl = document.getElementById("gmail-settings-msg");
+  
+  if (!clientId) {
+    msgEl.textContent = "Client ID is required";
+    msgEl.className = "status-msg error";
+    msgEl.style.display = "block";
+    return;
+  }
+  
+  msgEl.textContent = "Saving...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+  
+  try {
+    const body = { gmail_client_id: clientId };
+    if (clientSecret) body.gmail_client_secret = clientSecret;
+    await apiFetch("POST", "/settings", body);
+    msgEl.textContent = "Credentials saved successfully";
+    msgEl.className = "status-msg success";
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
+async function connectGmail() {
+  const msgEl = document.getElementById("gmail-settings-msg");
+  msgEl.textContent = "Opening authorization window...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+  
+  try {
+    const resp = await apiFetch("GET", "/gmail/auth-url");
+    const data = await resp.json();
+    
+    msgEl.textContent = "Complete authorization in the new tab, then return here.";
+    msgEl.className = "status-msg";
+    
+    // Open auth URL in new tab
+    window.open(data.url, "_blank", "width=500,height=600");
+    
+    // Poll for connection status
+    let pollCount = 0;
+    const maxPolls = 40; // 2 minutes with 3-second intervals
+    const pollInterval = setInterval(async function() {
+      pollCount++;
+      try {
+        const statusResp = await apiFetch("GET", "/gmail/status");
+        const status = await statusResp.json();
+        if (status.connected) {
+          clearInterval(pollInterval);
+          msgEl.textContent = "Gmail connected successfully!";
+          msgEl.className = "status-msg success";
+          await loadGmailSettings();
+        }
+      } catch (e) {
+        // Polling continues
+      }
+      
+      if (pollCount >= maxPolls) {
+        clearInterval(pollInterval);
+        msgEl.textContent = "Authorization timeout. Please try again.";
+        msgEl.className = "status-msg error";
+      }
+    }, 3000);
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
+function toggleGmailSecret(btn) {
+  const input = document.getElementById("gmail-client-secret");
+  if (input.type === "password") {
+    input.type = "text";
+    btn.textContent = "hide";
+  } else {
+    input.type = "password";
+    btn.textContent = "show";
+  }
+}
+
+async function disconnectGmail() {
+  const msgEl = document.getElementById("gmail-settings-msg");
+  msgEl.textContent = "Disconnecting...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+  
+  try {
+    await apiFetch("POST", "/gmail/disconnect", {});
+    msgEl.textContent = "Gmail disconnected";
+    msgEl.className = "status-msg success";
+    await loadGmailSettings();
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
 
 // Import from URL
 async function importFromUrl() {
@@ -2725,6 +3184,138 @@ function _setDocStatus(docType, msg, cls) {
   el.className = "doc-compile-status" + (cls ? " " + cls : "");
   if (cls === "success") {
     setTimeout(function() { if (el.textContent === msg) el.textContent = ""; }, 3000);
+  }
+}
+
+function _setGenStatus(docType, msg, cls) {
+  var el = document.getElementById(docType + "-gen-status");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "doc-compile-status" + (cls ? " " + cls : "");
+  if (cls === "success") {
+    setTimeout(function() { if (el.textContent === msg) el.textContent = ""; }, 4000);
+  }
+}
+
+var _GEN_NODE_LABELS = {
+  "retrieve_kb_docs":   "Retrieving knowledge base...",
+  "generate_or_revise": "Generating document...",
+  "analyze_fit":        "Analysing job fit...",
+  "analyze_quality":    "Checking quality...",
+  "apply_suggestions":  "Applying improvements...",
+  "compile_and_check":  "Compiling...",
+  "reduce_size":        "Reducing to 1 page...",
+  "finalize":           "Finalising...",
+  "done":               "Done",
+  "error":              "Error"
+};
+
+async function _generateDoc(docType) {
+  var docId = _currentDocId[docType];
+  if (!docId) return;
+
+  // Save current editor state first
+  var saveBody = {
+    latex_source: _cmEditors[docType].getValue(),
+    prompt_text: _getInstructionsAsJson(docType)
+  };
+  try {
+    await apiFetch("PUT", "/documents/" + docId, saveBody);
+  } catch (e) {
+    _setGenStatus(docType, "Save failed: " + e.message, "error");
+    return;
+  }
+
+  // Heuristic: if template placeholders like <<KEY: ...>> are still present,
+  // treat this as a first generation.
+  var currentLatex = _cmEditors[docType].getValue();
+  var isFirst = /<<[A-Z\-]+:/.test(currentLatex);
+
+  _setGenStatus(docType, "Starting...", "");
+  _showCompileOverlay(docType, true);
+
+  var resp;
+  try {
+    resp = await fetch(API_BASE + "/documents/" + docId + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_first_generation: isFirst })
+    });
+  } catch (e) {
+    _setGenStatus(docType, "Network error: " + e.message, "error");
+    _showCompileOverlay(docType, false);
+    return;
+  }
+
+  if (!resp.ok) {
+    var errData = await resp.json().catch(function() { return { detail: "Request failed" }; });
+    _setGenStatus(docType, errData.detail || "Generate failed", "error");
+    _showCompileOverlay(docType, false);
+    return;
+  }
+
+  // Read SSE stream
+  var reader = resp.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = "";
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    var lines = buffer.split("\\n");
+    buffer = lines.pop();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.startsWith("data: ")) continue;
+      var raw = line.slice(6).trim();
+      if (!raw) continue;
+      var evt;
+      try { evt = JSON.parse(raw); } catch (e) { continue; }
+
+      if (evt.node && evt.node !== "done" && evt.node !== "error") {
+        var label = _GEN_NODE_LABELS[evt.node] || evt.node;
+        _setGenStatus(docType, label, "");
+      }
+
+      if (evt.node === "done") {
+        _showCompileOverlay(docType, false);
+        if (evt.latex) {
+          _cmEditors[docType].setValue(evt.latex);
+          _buildInstructionsFromLatex(docType, evt.latex);
+          // Refresh PDF preview from the cache the server just populated
+          var previewEl = document.getElementById(docType + "-preview-frame");
+          if (previewEl) {
+            var pdfUrl = API_BASE + "/documents/" + docId + "/pdf?t=" + Date.now();
+            _currentPdfUrl[docType] = API_BASE + "/documents/" + docId + "/pdf";
+            _renderPdf(docType, pdfUrl);
+          }
+          document.getElementById(docType + "-download-btn").style.display = "";
+          _loadVersions(docType);
+        }
+        // Show agent feedback panel
+        var panel = document.getElementById(docType + "-agent-feedback");
+        if (panel && (evt.fit_feedback || evt.quality_feedback || evt.generation_system_prompt || evt.generation_user_prompt)) {
+          panel.style.display = "";
+          var fitEl = document.getElementById(docType + "-fit-feedback");
+          var qualEl = document.getElementById(docType + "-quality-feedback");
+          var sysPromptEl = document.getElementById(docType + "-generation-system-prompt");
+          var userPromptEl = document.getElementById(docType + "-generation-user-prompt");
+          if (fitEl) fitEl.textContent = evt.fit_feedback || "";
+          if (qualEl) qualEl.textContent = evt.quality_feedback || "";
+          if (sysPromptEl) sysPromptEl.textContent = evt.generation_system_prompt || "";
+          if (userPromptEl) userPromptEl.textContent = evt.generation_user_prompt || "";
+        }
+        var pageLabel = evt.page_count ? " (" + evt.page_count + " page)" : "";
+        _setGenStatus(docType, "Generated" + pageLabel, "success");
+      }
+
+      if (evt.node === "error") {
+        _showCompileOverlay(docType, false);
+        _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
+      }
+    }
   }
 }
 

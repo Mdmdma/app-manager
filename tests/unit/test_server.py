@@ -1,7 +1,8 @@
+import json
 import re
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from uuid import UUID
 from datetime import date
 
@@ -562,6 +563,176 @@ async def test_save_settings_batch_is_atomic(client):
             )
 
 
+# --- Gmail endpoints ---
+
+@pytest.mark.asyncio
+async def test_get_settings_includes_gmail_fields(client, isolated_db):
+    """GET /settings should include gmail_client_id and masked Gmail fields."""
+    _db_module.set_setting("gmail_client_id", "123456.apps.googleusercontent.com", db_path=isolated_db)
+    _db_module.set_setting("gmail_client_secret", "secret-key", db_path=isolated_db)
+    _db_module.set_setting("gmail_refresh_token", "refresh-token", db_path=isolated_db)
+    _db_module.set_setting("gmail_user_email", "user@example.com", db_path=isolated_db)
+    
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    
+    # Plain keys should be in response
+    assert data["gmail_client_id"] == "123456.apps.googleusercontent.com"
+    assert data["gmail_user_email"] == "user@example.com"
+    
+    # Secret and refresh token should be masked
+    assert data["gmail_client_secret_set"] is True
+    assert data["gmail_refresh_token_set"] is True
+    
+    # Raw secret and token should NOT be in response
+    assert "gmail_client_secret" not in data
+    assert "gmail_refresh_token" not in data
+
+
+@pytest.mark.asyncio
+async def test_save_settings_gmail_fields(client):
+    """POST /settings should save Gmail fields."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={
+            "gmail_client_id": "123456.apps.googleusercontent.com",
+            "gmail_client_secret": "secret-key",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert "gmail_client_id" in data["saved"]
+    assert "gmail_client_secret" in data["saved"]
+
+
+@pytest.mark.asyncio
+async def test_list_kb_namespaces(client):
+    """GET /kb/namespaces proxies the kb API and returns namespace list."""
+    sample = [{"id": "ns1", "name": "Resume"}, {"id": "ns2", "name": "Cover Letters"}]
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = sample
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_http_client = MagicMock()
+    mock_http_client.get = AsyncMock(return_value=mock_resp)
+    mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+    mock_http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_http_client):
+        resp = await client.get("/api/v1/kb/namespaces")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == sample
+
+
+@pytest.mark.asyncio
+async def test_list_kb_namespaces_kb_unavailable(client):
+    """GET /kb/namespaces returns empty list when kb is unreachable."""
+    import httpx as _httpx
+
+    mock_http_client = MagicMock()
+    mock_http_client.get = AsyncMock(side_effect=_httpx.ConnectError("refused"))
+    mock_http_client.__aenter__ = AsyncMock(return_value=mock_http_client)
+    mock_http_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_http_client):
+        resp = await client.get("/api/v1/kb/namespaces")
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_save_settings_kb_retrieval_fields(client):
+    """POST /settings should save KB retrieval fields and return them in saved list."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={
+            "kb_retrieval_namespaces": '["ns1", "ns2"]',
+            "kb_retrieval_n_results": 5,
+            "kb_retrieval_padding": 1,
+            "kb_include_namespaces": '["ns3"]',
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert set(data["saved"]) == {
+        "kb_retrieval_namespaces",
+        "kb_retrieval_n_results",
+        "kb_retrieval_padding",
+        "kb_include_namespaces",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_settings_returns_kb_retrieval_fields(client, isolated_db):
+    """GET /settings should return kb retrieval plain keys when stored."""
+    _db_module.set_setting("kb_retrieval_namespaces", '["ns1"]', db_path=isolated_db)
+    _db_module.set_setting("kb_retrieval_n_results", "5", db_path=isolated_db)
+    _db_module.set_setting("kb_retrieval_padding", "2", db_path=isolated_db)
+    _db_module.set_setting("kb_include_namespaces", '["ns2"]', db_path=isolated_db)
+
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["kb_retrieval_namespaces"] == '["ns1"]'
+    assert data["kb_retrieval_n_results"] == "5"
+    assert data["kb_retrieval_padding"] == "2"
+    assert data["kb_include_namespaces"] == '["ns2"]'
+
+
+@pytest.mark.asyncio
+async def test_gmail_auth_url_with_valid_credentials(client, isolated_db):
+    """GET /gmail/auth-url should return an auth URL when credentials are configured."""
+    _db_module.set_setting("gmail_client_id", "123456.apps.googleusercontent.com", db_path=isolated_db)
+    _db_module.set_setting("gmail_client_secret", "secret-key", db_path=isolated_db)
+    
+    with patch("jam.gmail_client.get_auth_url") as mock_get_auth:
+        mock_get_auth.return_value = "https://accounts.google.com/auth?..."
+        resp = await client.get("/api/v1/gmail/auth-url")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "url" in data
+
+
+@pytest.mark.asyncio
+async def test_gmail_status_not_connected(client):
+    """GET /gmail/status should return connected=false when no refresh_token."""
+    resp = await client.get("/api/v1/gmail/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["connected"] is False
+    assert data["email"] is None
+
+
+@pytest.mark.asyncio
+async def test_gmail_disconnect(client):
+    """POST /gmail/disconnect should clear Gmail tokens."""
+    import os
+    
+    # First set some values
+    resp = await client.post(
+        "/api/v1/settings",
+        json={
+            "gmail_refresh_token": "token-123",
+            "gmail_user_email": "user@example.com",
+        },
+    )
+    assert resp.status_code == 200
+    
+    # Now disconnect
+    resp = await client.post("/api/v1/gmail/disconnect", json={})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+
+
+# --- POST /applications/from-url ---
 # --- POST /applications/from-url ---
 
 @pytest.mark.asyncio
@@ -1253,3 +1424,156 @@ def test_html_page_no_multiline_js_regex_literals():
         "(browser syntax error 'missing /').  Escape \\n as \\\\n in the "
         f"Python source string.\nOffending snippets: {bad}"
     )
+
+
+# ── Generate endpoint ────────────────────────────────────────────────────────
+
+def _make_app_and_doc(isolated_db):
+    """Helper: create a test application with job description and a CV document."""
+    from jam.db import create_application, create_document
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    now = datetime.now(timezone.utc).isoformat()
+    app_id = str(uuid4())
+    create_application(
+        app_id,
+        "Acme",
+        "Engineer",
+        "not_applied_yet",
+        None,
+        None,
+        "2026-01-01",
+        now,
+        now,
+        full_text="Python engineer position requiring FastAPI and PostgreSQL experience.",
+        db_path=isolated_db,
+    )
+    doc = create_document(
+        application_id=app_id,
+        doc_type="cv",
+        title="CV",
+        latex_source=r"\documentclass{article}\begin{document}<<NAME: Test>>\end{document}",
+        db_path=isolated_db,
+    )
+    return app_id, doc["id"]
+
+
+@pytest.mark.asyncio
+async def test_generate_404_no_doc(client):
+    resp = await client.post("/api/v1/documents/nonexistent-doc/generate", json={"is_first_generation": True})
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generate_422_no_job_description(client, isolated_db):
+    from jam.db import create_application, create_document
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    now = datetime.now(timezone.utc).isoformat()
+    app_id = str(uuid4())
+    create_application(
+        app_id,
+        "Acme",
+        "Eng",
+        "not_applied_yet",
+        None,
+        None,
+        "2026-01-01",
+        now,
+        now,
+        full_text=None,
+        description=None,
+        db_path=isolated_db,
+    )
+    doc = create_document(
+        application_id=app_id,
+        doc_type="cv",
+        title="CV",
+        latex_source=r"\documentclass{article}\begin{document}\end{document}",
+        db_path=isolated_db,
+    )
+    resp = await client.post(
+        f"/api/v1/documents/{doc['id']}/generate",
+        json={"is_first_generation": True},
+    )
+    assert resp.status_code == 422
+    assert "job description" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_generate_streams_sse(client, isolated_db):
+    """SSE stream returns progress events and a final done event."""
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+
+    # Simulate graph yielding two node chunks then a final state
+    async def _fake_astream(state, stream_mode=None):
+        yield {
+            "progress_events": [{"node": "retrieve_kb_docs", "status": "done", "detail": "0 KB docs retrieved"}],
+            "kb_docs": [],
+            "inline_comments": [],
+            "locked_sections": [],
+        }
+        yield {
+            "progress_events": [
+                {"node": "retrieve_kb_docs", "status": "done", "detail": "0 KB docs retrieved"},
+                {"node": "generate_or_revise", "status": "done"},
+            ],
+            "current_latex": r"\documentclass{article}\begin{document}Generated.\end{document}",
+            "final_latex": r"\documentclass{article}\begin{document}Generated.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": "Good fit.",
+            "quality_feedback": "Clean writing.",
+            "page_count": 1,
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph:
+        mock_graph.astream = _fake_astream
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": True},
+        )
+
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers["content-type"]
+
+    lines = [l for l in resp.text.splitlines() if l.startswith("data: ")]
+    assert len(lines) >= 2
+
+    events = [json.loads(l[6:]) for l in lines]
+    node_names = [e["node"] for e in events]
+    assert "retrieve_kb_docs" in node_names
+    # Final event should be "done"
+    assert events[-1]["node"] == "done"
+    assert events[-1]["fit_feedback"] == "Good fit."
+
+
+@pytest.mark.asyncio
+async def test_generate_updates_db_on_success(client, isolated_db):
+    """After successful generation the document's latex_source is updated in DB."""
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+    new_latex = r"\documentclass{article}\begin{document}Updated content.\end{document}"
+
+    async def _fake_astream(state, stream_mode=None):
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "final_latex": new_latex,
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": "",
+            "quality_feedback": "",
+            "page_count": 1,
+            "current_latex": new_latex,
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph:
+        mock_graph.astream = _fake_astream
+        await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": True},
+        )
+
+    # Verify DB was updated
+    from jam.db import get_document
+    updated = get_document(doc_id, db_path=isolated_db)
+    assert updated["latex_source"] == new_latex

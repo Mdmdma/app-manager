@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from jam.config import Settings
-from jam.llm import _parse_json, extract_job_info, _api_key_for, _get_ollama_url
+from jam.llm import _parse_json, extract_job_info, llm_call, _api_key_for, _get_ollama_url
 
 
 # ── _parse_json ──────────────────────────────────────────────────────────────
@@ -181,6 +181,78 @@ async def test_extract_ollama():
     assert result["company"] == "Acme Corp"
     call_args = instance.post.call_args
     assert "localhost:11434" in call_args[0][0]
+
+
+# ── llm_call ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_llm_call_openai():
+    settings = Settings(llm_provider="openai", openai_api_key="sk-test", llm_model="gpt-4o")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "response text"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("system prompt", "user message", settings)
+
+    assert result == "response text"
+    call_args = instance.post.call_args
+    assert "api.openai.com" in call_args[0][0]
+    payload = call_args[1]["json"]
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][0]["content"] == "system prompt"
+    assert payload["messages"][1]["content"] == "user message"
+
+
+@pytest.mark.asyncio
+async def test_llm_call_anthropic():
+    settings = Settings(llm_provider="anthropic", anthropic_api_key="sk-ant-test", llm_model="claude-sonnet-4-6")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"content": [{"text": "anthropic response"}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings)
+
+    assert result == "anthropic response"
+    call_args = instance.post.call_args
+    assert "api.anthropic.com" in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_groq():
+    settings = Settings(llm_provider="groq", groq_api_key="gsk-test", llm_model="llama3")
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "groq response"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings)
+
+    assert result == "groq response"
+    call_args = instance.post.call_args
+    assert "api.groq.com" in call_args[0][0]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import os
 import shutil
 import tempfile
@@ -12,12 +13,12 @@ from uuid import UUID, uuid4
 import httpx
 from fastapi import FastAPI, APIRouter, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jam.html_page import HTML_PAGE
 from jam.db import (
-    init_db, get_all_settings, set_setting, set_settings_batch, get_catalog,
+    init_db, get_all_settings, set_setting, set_settings_batch, delete_setting, get_catalog,
     create_application as db_create_application,
     get_application as db_get_application,
     list_applications as db_list_applications,
@@ -42,9 +43,19 @@ _ENV_MAP = {
     "ollama_base_url":   "OLLAMA_BASE_URL",
     "llm_provider":      "LLM_PROVIDER",
     "llm_model":         "LLM_MODEL",
+    "gmail_client_id": "GMAIL_CLIENT_ID",
+    "gmail_client_secret": "GMAIL_CLIENT_SECRET",
+    "gmail_refresh_token": "GMAIL_REFRESH_TOKEN",
+    "gmail_user_email": "GMAIL_USER_EMAIL",
 }
 
-_PLAIN_KEYS = {"llm_provider", "llm_model", "ollama_base_url", "cv_latex_template", "cover_letter_latex_template"}
+_PLAIN_KEYS = {
+    "llm_provider", "llm_model", "ollama_base_url",
+    "cv_latex_template", "cover_letter_latex_template",
+    "gmail_client_id", "gmail_user_email",
+    "kb_retrieval_namespaces", "kb_retrieval_n_results",
+    "kb_retrieval_padding", "kb_include_namespaces",
+}
 
 DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
 
@@ -279,6 +290,14 @@ class SettingsRequest(BaseModel):
     llm_model: Optional[str] = None
     cv_latex_template: Optional[str] = None
     cover_letter_latex_template: Optional[str] = None
+    gmail_client_id: Optional[str] = None
+    gmail_client_secret: Optional[str] = None
+    gmail_refresh_token: Optional[str] = None
+    gmail_user_email: Optional[str] = None
+    kb_retrieval_namespaces: Optional[str] = None
+    kb_retrieval_n_results: Optional[int] = None
+    kb_retrieval_padding: Optional[int] = None
+    kb_include_namespaces: Optional[str] = None
 
 
 class DocType(str, Enum):
@@ -540,6 +559,61 @@ async def catalog_endpoint():
     return get_catalog()
 
 
+@router.get("/kb/namespaces")
+async def list_kb_namespaces():
+    """Proxy: list all namespaces from the kb knowledge base."""
+    from jam.config import Settings
+    settings = Settings()
+    base_url = settings.kb_api_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{base_url}/namespaces")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception:
+        return []
+
+
+@router.post("/kb/test-retrieval")
+async def test_kb_retrieval(body: dict):
+    """Test KB document retrieval for debugging. Returns detailed error info."""
+    from jam.kb_client import list_namespace_documents, search_documents
+    from jam.config import Settings
+
+    settings = Settings()
+    namespace_ids = body.get("namespace_ids", [])
+    query = body.get("query", "test")
+
+    result = {
+        "kb_api_url": settings.kb_api_url,
+        "namespace_ids": namespace_ids,
+        "query": query,
+        "search_results": None,
+        "search_error": None,
+        "list_results": None,
+        "list_error": None,
+    }
+
+    # Test semantic search
+    try:
+        search_results = await search_documents(
+            query, n_results=5, namespace_ids=namespace_ids if namespace_ids else None, settings=settings
+        )
+        result["search_results"] = search_results
+    except Exception as e:
+        result["search_error"] = str(e)
+
+    # Test list_namespace_documents
+    if namespace_ids:
+        try:
+            list_results = await list_namespace_documents(namespace_ids, settings=settings)
+            result["list_results"] = list_results
+        except Exception as e:
+            result["list_error"] = str(e)
+
+    return result
+
+
 @router.get("/settings")
 async def get_settings_endpoint():
     """Return current settings (keys masked)."""
@@ -548,6 +622,8 @@ async def get_settings_endpoint():
         "openai_api_key_set": bool(stored.get("openai_api_key")),
         "anthropic_api_key_set": bool(stored.get("anthropic_api_key")),
         "groq_api_key_set": bool(stored.get("groq_api_key")),
+        "gmail_client_secret_set": bool(stored.get("gmail_client_secret", "")),
+        "gmail_refresh_token_set": bool(stored.get("gmail_refresh_token", "")),
     }
     for key in _PLAIN_KEYS:
         if stored.get(key):
@@ -578,6 +654,44 @@ async def get_default_templates():
         "cv": DEFAULT_CV_TEMPLATE,
         "cover_letter": DEFAULT_COVER_LETTER_TEMPLATE,
     }
+
+
+# ── Gmail endpoints ────────────────────────────────────────────────────────────
+
+@router.get("/gmail/auth-url")
+async def gmail_auth_url():
+    """Return OAuth authorization URL. 400 if client_id or client_secret not set."""
+    from jam.config import Settings
+    from jam.gmail_client import get_auth_url
+    
+    settings = Settings()
+    try:
+        url = get_auth_url(settings=settings)
+        return {"url": url}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
+
+@router.get("/gmail/status")
+async def gmail_status():
+    """Return connection status, reading directly from DB so it survives restarts."""
+    stored = get_all_settings()
+    connected = bool(stored.get("gmail_refresh_token"))
+    return {"connected": connected, "email": stored.get("gmail_user_email") if connected else None}
+
+
+@router.post("/gmail/disconnect")
+async def gmail_disconnect():
+    """Clear stored Gmail tokens."""
+    from jam.db import delete_setting
+    
+    delete_setting("gmail_refresh_token")
+    delete_setting("gmail_user_email")
+    os.environ.pop("GMAIL_REFRESH_TOKEN", None)
+    os.environ.pop("GMAIL_USER_EMAIL", None)
+    return {"ok": True}
 
 
 # ── Document endpoints ────────────────────────────────────────────────────────
@@ -771,6 +885,109 @@ async def compile_version_endpoint(version_id: str):
     )
 
 
+class GenerateRequest(BaseModel):
+    """Request body for the document generation endpoint."""
+    is_first_generation: bool = False
+
+
+@router.post("/documents/{doc_id}/generate")
+async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
+    """Stream agentic document generation progress via Server-Sent Events.
+
+    The response is a ``text/event-stream`` where each ``data:`` line is a
+    JSON object.  Progress events have ``node`` and ``status`` fields; the
+    final event has ``node: "done"`` and carries ``latex``, ``page_count``,
+    ``fit_feedback``, ``quality_feedback``, and an optional ``error`` field.
+    """
+    from jam.generation import generation_graph
+
+    doc = db_get_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    app_row = db_get_application(doc["application_id"])
+    if not app_row:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    job_description = app_row.get("full_text") or app_row.get("description") or ""
+    if not job_description.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Application has no job description. Import from URL first.",
+        )
+
+    initial_state = {
+        "doc_id": doc_id,
+        "application_id": doc["application_id"],
+        "doc_type": doc["doc_type"],
+        "latex_template": doc["latex_source"],
+        "job_description": job_description,
+        "instructions_json": doc.get("prompt_text", ""),
+        "is_first_generation": req.is_first_generation,
+        "kb_docs": [],
+        "inline_comments": [],
+        "locked_sections": [],
+        "current_latex": doc["latex_source"],
+        "fit_feedback": "",
+        "quality_feedback": "",
+        "page_count": 0,
+        "compile_attempts": 0,
+        "compile_error": None,
+        "progress_events": [],
+        "final_latex": None,
+        "final_pdf": None,
+        "error": None,
+    }
+
+    async def event_stream():
+        final_state = None
+        try:
+            async for chunk in generation_graph.astream(
+                initial_state, stream_mode="values"
+            ):
+                final_state = chunk
+                events = chunk.get("progress_events", [])
+                if events:
+                    evt = events[-1]
+                    yield f"data: {_json.dumps(evt)}\n\n"
+        except Exception as exc:
+            yield f"data: {_json.dumps({'node': 'error', 'status': 'error', 'detail': str(exc)})}\n\n"
+            return
+
+        # Persist final result to DB
+        if final_state and final_state.get("final_latex"):
+            db_update_document(doc_id, {"latex_source": final_state["final_latex"]})
+            db_create_version(
+                document_id=doc_id,
+                latex_source=final_state["final_latex"],
+                prompt_text=doc.get("prompt_text", ""),
+            )
+            if final_state.get("final_pdf"):
+                _pdf_cache[doc_id] = final_state["final_pdf"]
+
+        result_event = {
+            "node": "done",
+            "status": "done",
+            "latex": final_state.get("final_latex") if final_state else None,
+            "page_count": final_state.get("page_count", 0) if final_state else 0,
+            "fit_feedback": final_state.get("fit_feedback", "") if final_state else "",
+            "quality_feedback": final_state.get("quality_feedback", "") if final_state else "",
+            "generation_system_prompt": final_state.get("generation_system_prompt") if final_state else None,
+            "generation_user_prompt": final_state.get("generation_user_prompt") if final_state else None,
+            "error": final_state.get("error") if final_state else "Unknown error",
+        }
+        yield f"data: {_json.dumps(result_event)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 app = FastAPI(title="jam API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -779,6 +996,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api/v1")
+
+
+@app.get("/gmail/callback", response_class=HTMLResponse)
+async def gmail_callback(code: str, state: str | None = None, iss: str | None = None):
+    """Exchange OAuth code, store tokens, then close the popup via JS."""
+    from jam.config import Settings
+    from jam.gmail_client import exchange_code
+
+    settings = Settings()
+    try:
+        result = exchange_code(code=code, settings=settings)
+        set_settings_batch({
+            "gmail_refresh_token": result["refresh_token"],
+            "gmail_user_email": result["email"],
+        })
+        os.environ["GMAIL_REFRESH_TOKEN"] = result["refresh_token"]
+        os.environ["GMAIL_USER_EMAIL"] = result["email"]
+        return HTMLResponse("""<!doctype html>
+<html><head><title>Connected</title></head><body>
+<p>Gmail connected successfully. This window will close automatically.</p>
+<script>window.close();</script>
+</body></html>""")
+    except Exception as e:
+        return HTMLResponse(f"""<!doctype html>
+<html><head><title>Error</title></head><body>
+<p style="color:red">Connection failed: {e}</p>
+<p>Close this window and try again.</p>
+</body></html>""", status_code=400)
 
 
 @app.on_event("startup")

@@ -1,7 +1,7 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: 9beff8cf6df1 -->
-<!-- updated: 2026-03-27 -->
+<!-- hash: a2ae98762fff -->
+<!-- updated: 2026-03-28 -->
 
 ## Public API
 
@@ -20,7 +20,7 @@
 
 ### Tabs / Views
 - Dashboard: stats row (Total, Active, Interviews, Offers) + actions bar + applications grid
-- Settings: General, Connection, AI Models sections via sidebar
+- Settings: General, Connection, Knowledge Base, AI Models, Templates, Email / Gmail sections via sidebar
 - Detail: multi-step navigation (App Details, CV & Cover Letters, Extra Questions, Interview rounds, Offer)
 
 ### Actions Bar (`div.actions-bar`)
@@ -37,6 +37,15 @@ Three rows:
 - "jam Server": `#jam-settings-dot`, `#jam-settings-display`
 - "Knowledge Base": `#kb-settings-dot`, `#kb-settings-display`
 - "KB API URL": `#kb-url-display` (read-only)
+
+### Knowledge Base Settings Section (`#section-knowledge-base`)
+Four setting groups:
+- "Search Namespaces": `#kb-search-namespaces` div — dynamic checkboxes loaded from `GET /kb/namespaces`
+- "Retrieved Chunks": `#kb-n-results` number input (1–50, default 5)
+- "Padding": `#kb-padding` number input (0–10, default 0)
+- "Include Entire Namespaces": `#kb-include-namespaces` div — dynamic checkboxes loaded from `GET /kb/namespaces`
+- Status: `#kb-settings-msg`
+- Save button calls `saveKbSettings()`
 
 ### CV & Cover Letters Step (`#step-cv-cover`)
 Full tri-split LaTeX editor with two document types (CV, Cover Letter):
@@ -99,6 +108,14 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - `onProviderChange()` — updates model dropdown and credential fields on provider change
 - `renderCredentialFields(prov)` — builds credential input fields with show/hide toggle
 - `saveAiSettings()` — POST `/settings` with current AI config
+- `loadKbSettings()` — GET `/kb/namespaces` + reads `_stored`, populates namespace checkboxes and numeric fields
+- `saveKbSettings()` — collects checked namespaces and numeric values, POST `/settings`
+- `loadTemplateSettings()` — populates template textareas from `_stored` or defaults
+- `saveTemplateSettings()` — POST `/settings` with template values
+- `loadGmailSettings()` — GET `/gmail/status` + GET `/settings`, populates Gmail fields
+- `saveGmailCredentials()` — POST `/settings` with Gmail OAuth credentials
+- `connectGmail()` — GET `/gmail/auth-url`, opens auth URL in new window
+- `disconnectGmail()` — POST `/gmail/disconnect`
 - `openDetailPage(appId)` — loads application, resets doc state, shows detail view
 - `switchDetailStep(step)` — activates detail step panel; lazy-loads CV docs on first visit
 - `_switchDocTab(docType)` — switches between cv/cover_letter document tabs
@@ -169,3 +186,4 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - CodeMirror and PDF.js are loaded from cdnjs CDN; requires network access at runtime
 - Instruction panel rebuild only happens on document load / version restore, not on live LaTeX edits
 - CodeMirror placeholder not shown (textarea placeholder attribute hidden once CM wraps the element)
+- KB namespace checkboxes require knowledge base to be running; shows fallback message if unavailable

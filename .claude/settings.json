@@ -27,7 +27,9 @@
       "Bash(echo:*)",
       "Bash(mkdir:*)",
       "Bash(true:*)",
-      "Read(/home/mathis/Documents/kb/**)"
+      "Read(/home/mathis/Documents/kb/**)",
+      "Read(//home/mathis/Documents/kb/kb/**)",
+      "Bash(curl -s http://localhost:8001/)"
     ],
     "deny": [
       "Bash(git push:*)",
