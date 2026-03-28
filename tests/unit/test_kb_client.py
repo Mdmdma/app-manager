@@ -406,39 +406,70 @@ async def test_search_documents_network_error_degrades_gracefully():
 
 
 # ── list_namespace_documents ─────────────────────────────────────────────────
+# Now uses POST /search (not GET /documents) to retrieve actual text chunks.
 
 @pytest.mark.asyncio
-async def test_list_namespace_documents_success():
+async def test_list_namespace_documents_uses_search_endpoint():
+    """list_namespace_documents calls POST /search, not GET /documents."""
     settings = Settings(kb_api_url="http://kb:8000/api/v1")
-    docs_response = {
-        "documents": [
-            {"id": "d1", "title": "Doc 1", "content": "Content 1"},
-            {"id": "d2", "title": "Doc 2", "content": "Content 2"},
-        ],
-        "total": 2,
+    search_response = {
+        "results": [
+            {"text": "chunk 1 text", "doc_id": "d1", "chunk_index": 0},
+            {"text": "chunk 2 text", "doc_id": "d1", "chunk_index": 1},
+        ]
     }
 
     with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
         resp = MagicMock(status_code=200)
         resp.raise_for_status = lambda: None
-        resp.json.return_value = docs_response
-        instance.get.return_value = resp
+        resp.json.return_value = search_response
+        instance.post.return_value = resp
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=False)
         MockClient.return_value = instance
 
         result = await list_namespace_documents(["ns-a", "ns-b"], settings=settings)
 
+    # Should use POST /search, not GET /documents
+    instance.post.assert_called_once()
+    instance.get.assert_not_called()
+    call_args = instance.post.call_args
+    assert "/search" in call_args[0][0]
+    body = call_args[1]["json"]
+    assert body["namespace_ids"] == ["ns-a", "ns-b"]
+    assert body["top_k"] == 100
     assert len(result) == 2
-    assert result[0]["id"] == "d1"
-    call_args = instance.get.call_args
-    assert "/documents" in call_args[0][0]
-    # namespace_id params should be passed for each ns
-    params = call_args[1]["params"]
-    ns_values = [v for k, v in params if k == "namespace_id"]
-    assert "ns-a" in ns_values
-    assert "ns-b" in ns_values
+    assert result[0]["text"] == "chunk 1 text"
+
+
+@pytest.mark.asyncio
+async def test_list_namespace_documents_chunks_sorted_by_chunk_index():
+    """Chunks are returned sorted by chunk_index within each document."""
+    settings = Settings(kb_api_url="http://kb:8000/api/v1")
+    # Returned in random order from search
+    search_response = {
+        "results": [
+            {"text": "third",  "doc_id": "d1", "chunk_index": 2},
+            {"text": "first",  "doc_id": "d1", "chunk_index": 0},
+            {"text": "second", "doc_id": "d1", "chunk_index": 1},
+        ]
+    }
+
+    with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = search_response
+        instance.post.return_value = resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await list_namespace_documents(["ns-a"], settings=settings)
+
+    texts = [r["text"] for r in result]
+    assert texts == ["first", "second", "third"]
 
 
 @pytest.mark.asyncio
@@ -447,7 +478,7 @@ async def test_list_namespace_documents_network_error():
 
     with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
-        instance.get.side_effect = httpx.ConnectError("refused")
+        instance.post.side_effect = httpx.ConnectError("refused")
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=False)
         MockClient.return_value = instance
@@ -464,7 +495,7 @@ async def test_list_namespace_documents_404():
     with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
         instance = AsyncMock()
         resp = MagicMock(status_code=404)
-        instance.get.return_value = resp
+        instance.post.return_value = resp
         instance.__aenter__ = AsyncMock(return_value=instance)
         instance.__aexit__ = AsyncMock(return_value=False)
         MockClient.return_value = instance

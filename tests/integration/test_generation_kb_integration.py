@@ -249,3 +249,37 @@ async def test_kb_context_not_none_available_when_docs_exist():
         f"KB context should be populated! Got {len(kb_context)} chars"
     assert len(prompt_section) > 50, \
         f"KB context should have substantial content, got: {prompt_section[:100]}"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_include_namespace_returns_full_text_chunks():
+    """Integration: include namespaces fetch actual text chunks, not just metadata summaries."""
+    from jam.kb_client import list_namespace_documents
+    from jam.generation import _extract_kb_doc_content
+
+    settings = Settings()
+    # Use the 'academic record' namespace which has known documents
+    docs = await list_namespace_documents(["academic record"], settings=settings)
+
+    if not docs:
+        pytest.skip("No documents found in 'academic record' namespace")
+
+    print(f"\n✓ include namespace returned {len(docs)} chunks")
+
+    # Each chunk must have actual text content (not just metadata)
+    for i, doc in enumerate(docs[:3], 1):
+        content = _extract_kb_doc_content(doc)
+        print(f"  chunk {i}: {len(content)} chars — {content[:80]!r}")
+        assert len(content) > 50, (
+            f"Chunk {i} has only {len(content)} chars — likely metadata not text. "
+            f"Keys: {list(doc.keys())}"
+        )
+
+    # Total content should be substantially larger than a single summary (~250 chars)
+    total_chars = sum(len(_extract_kb_doc_content(d)) for d in docs)
+    print(f"✓ Total text from include namespace: {total_chars} chars")
+    assert total_chars > 500, (
+        f"Expected >500 chars of full text content, got {total_chars}. "
+        f"list_namespace_documents may be returning summaries instead of chunks."
+    )

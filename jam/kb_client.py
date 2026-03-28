@@ -69,27 +69,48 @@ async def list_namespace_documents(
     namespace_ids: list[str],
     settings: Settings | None = None,
 ) -> list[dict]:
-    """Fetch all documents belonging to the given namespaces.
+    """Fetch all text chunks belonging to the given namespaces.
 
     Used by the generation loop for the "include entire namespaces" feature.
-    Degrades gracefully to an empty list on errors.
+    Retrieves chunks via the search endpoint (the only KB API that returns text
+    content) using a broad generic query, then groups and sorts chunks by
+    doc_id + chunk_index to reconstruct each document in reading order.
+
+    Returns a list of chunk dicts each with a ``text`` field, compatible with
+    ``_extract_kb_doc_content``.  Degrades gracefully to an empty list on errors.
     """
     settings = settings or Settings()
     base_url = settings.kb_api_url.rstrip("/")
-    params: list[tuple[str, str]] = [
-        ("namespace_id", ns) for ns in namespace_ids
-    ]
-    params.append(("limit", "200"))
+    # Use a high top_k to capture all chunks across the namespaces.
+    # A neutral single-character query maximises coverage without biasing
+    # semantic ranking toward any particular topic.
+    body: dict = {"query": "a", "top_k": 100, "namespace_ids": namespace_ids}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(f"{base_url}/documents", params=params)
+            resp = await client.post(f"{base_url}/search", json=body)
             if resp.status_code == 404:
                 return []
             resp.raise_for_status()
             data = resp.json()
     except Exception:
         return []
-    return data.get("documents", [])
+
+    raw: list[dict] = data if isinstance(data, list) else data.get("results", [])
+
+    # Group chunks by doc_id and sort by chunk_index so the text reads in order.
+    from collections import defaultdict
+    by_doc: dict[str, list[dict]] = defaultdict(list)
+    for chunk in raw:
+        doc_id = chunk.get("doc_id") or chunk.get("id", "")
+        by_doc[doc_id].append(chunk)
+
+    result: list[dict] = []
+    for doc_id, chunks in by_doc.items():
+        ordered = sorted(chunks, key=lambda c: c.get("chunk_index", 0))
+        for chunk in ordered:
+            result.append(chunk)
+
+    return result
 
 
 async def ingest_url(url: str, settings: Settings | None = None) -> dict:
