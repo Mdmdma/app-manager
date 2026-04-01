@@ -1,6 +1,6 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: 38107b4a7e00 -->
+<!-- hash: 1355fd1b9e8e -->
 <!-- updated: 2026-04-01 -->
 
 ## Public API
@@ -12,7 +12,7 @@
 ## Key Components
 
 ### Layout
-- Header: app title + two connection indicators (jam + kb), click title to return to dashboard
+- Header: app title + three connection indicators (jam + kb + proxy), click title to return to dashboard
 - Dashboard view (`#dashboard-view`): stats row + actions bar + applications container
 - Settings view (`#settings-view`): sidebar nav + content panels
 - Detail view (`#detail-view`): sidebar with application info + step navigation + step panels
@@ -31,9 +31,10 @@
 - "New Application" button (`.btn.btn-primary`, calls `openNewApplicationModal()`)
 
 ### Connection Status (Header)
-Two side-by-side indicators in `.header-actions`:
+Three side-by-side indicators in `.header-actions`:
 - `#jam-status` / `#jam-dot` / `#jam-status-text` — jam server status
 - `#kb-status` / `#kb-dot` / `#kb-status-text` — kb knowledge base status
+- `#proxy-status` / `#proxy-dot` / `#proxy-status-text` — CLIProxy status
 
 ### Personal Info Settings Section (`#section-personal-info`)
 Default active settings tab. Five input fields for PDF metadata:
@@ -70,9 +71,10 @@ Interaction:
 CSS classes: `.rect-crop-modal-overlay`, `.rect-crop-modal`, `.rect-crop-container`, `.rect-crop-overlay-canvas`, `.rect-crop-modal-title`, `.rect-crop-modal-hint`, `.rect-crop-modal-footer`
 
 ### Connection Settings Section (`#section-connection`)
-Three rows:
+Four rows:
 - "jam Server": `#jam-settings-dot`, `#jam-settings-display`
 - "Knowledge Base": `#kb-settings-dot`, `#kb-settings-display`
+- "CLIProxy": `#proxy-settings-dot`, `#proxy-settings-display`
 - "KB API URL": `#kb-url-display` (read-only)
 
 ### Knowledge Base Settings Section (`#section-knowledge-base`)
@@ -174,7 +176,7 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `importFromUrl()` — POST `/applications/from-url` with `{url}`, updates status span, reloads list
 - `switchToSettings()` / `switchToDashboard()` — toggle main views
 - `switchSettingsSection(section)` — activate settings sidebar section
-- `checkKbConnection()` — GET `/health`, updates both jam and kb header/settings indicators
+- `checkKbConnection()` — GET `/health`, updates jam, kb, and proxy header/settings indicators
 - `loadAiSettings()` — GET `/catalog` + GET `/settings`, populates AI settings, then calls `renderStepModelOverrides()`
 - `renderProviderDropdown()` — fills `#ai-provider` select
 - `renderStepModelOverrides()` — builds per-step model override dropdowns in `#step-model-overrides` container; each dropdown has "Use global default" + grouped `<optgroup>` per provider from catalog; auto-saves on change via `POST /settings` with `step_model_*` key

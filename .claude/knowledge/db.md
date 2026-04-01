@@ -1,6 +1,6 @@
 # db Knowledge
 <!-- source: jam/db.py -->
-<!-- hash: 4e6a62167747 -->
+<!-- hash: 9ea8548613ab -->
 <!-- updated: 2026-04-01 -->
 
 ## Public API
@@ -38,7 +38,7 @@
 | `get_extra_question` | `(question_id: str, db_path?) -> dict \| None` | Return single extra question or None |
 | `update_extra_question` | `(question_id: str, fields: dict, db_path?) -> dict \| None` | Update extra question fields (auto-sets updated_at) |
 | `delete_extra_question` | `(question_id: str, db_path?) -> bool` | Delete extra question, returns True if removed |
-| `create_interview_round` | `(application_id, round_type?, round_number?, scheduled_at?, completed_at?, interviewer_names?, location?, status?, prep_notes?, debrief_notes?, questions_asked?, went_well?, to_improve?, confidence?, sort_order?, db_path?) -> dict` | Insert new interview round (auto-generates UUID) |
+| `create_interview_round` | `(application_id, round_type?, round_number?, scheduled_at?, scheduled_time?, completed_at?, interviewer_names?, location?, status?, prep_notes?, debrief_notes?, questions_asked?, went_well?, to_improve?, confidence?, sort_order?, db_path?) -> dict` | Insert new interview round (auto-generates UUID) |
 | `list_interview_rounds` | `(application_id: str, db_path?) -> list[dict]` | Return interview rounds ordered by sort_order, then created_at |
 | `get_interview_round` | `(round_id: str, db_path?) -> dict \| None` | Return single interview round or None |
 | `update_interview_round` | `(round_id: str, fields: dict, db_path?) -> dict \| None` | Update interview round fields (auto-sets updated_at) |
@@ -187,6 +187,7 @@
 | `round_type` | TEXT | NOT NULL, DEFAULT 'other' |
 | `round_number` | INTEGER | NOT NULL, DEFAULT 1 |
 | `scheduled_at` | TEXT | nullable |
+| `scheduled_time` | TEXT | NOT NULL, DEFAULT '' |
 | `completed_at` | TEXT | nullable |
 | `interviewer_names` | TEXT | NOT NULL, DEFAULT '' |
 | `location` | TEXT | NOT NULL, DEFAULT '' |

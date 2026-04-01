@@ -434,6 +434,7 @@ class InterviewRoundCreate(BaseModel):
     to_improve: str = ""
     confidence: Optional[int] = None
     sort_order: int = 0
+    scheduled_time: Optional[str] = None
 
 
 class InterviewRoundUpdate(BaseModel):
@@ -451,6 +452,7 @@ class InterviewRoundUpdate(BaseModel):
     to_improve: Optional[str] = None
     confidence: Optional[int] = None
     sort_order: Optional[int] = None
+    scheduled_time: Optional[str] = None
 
 
 class InterviewRoundResponse(BaseModel):
@@ -470,6 +472,7 @@ class InterviewRoundResponse(BaseModel):
     to_improve: str
     confidence: Optional[int] = None
     sort_order: int
+    scheduled_time: str = ""
     created_at: str
     updated_at: str
 
@@ -582,19 +585,26 @@ async def index():
 
 @router.get("/health")
 async def health():
-    """Health check — reports jam status and kb reachability."""
+    """Health check — reports jam status, kb reachability, and cliproxy reachability."""
     from jam.config import Settings
 
     settings = Settings()
     kb_status = "unreachable"
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
+    cliproxy_status = "unreachable"
+    async with httpx.AsyncClient(timeout=3) as client:
+        try:
             resp = await client.get(f"{settings.kb_api_url.rstrip('/')}/health")
             if resp.status_code == 200:
                 kb_status = "ok"
-    except Exception:
-        pass
-    return {"status": "ok", "kb_status": kb_status}
+        except Exception:
+            pass
+        try:
+            resp = await client.get(f"{settings.cliproxy_base_url.rstrip('/')}")
+            if 200 <= resp.status_code < 300:
+                cliproxy_status = "ok"
+        except Exception:
+            pass
+    return {"status": "ok", "kb_status": kb_status, "cliproxy_status": cliproxy_status}
 
 
 @router.get("/applications", response_model=list[Application])
@@ -1102,6 +1112,7 @@ async def create_interview(app_id: str, req: InterviewRoundCreate):
         to_improve=req.to_improve,
         confidence=req.confidence,
         sort_order=req.sort_order,
+        scheduled_time=req.scheduled_time or "",
     )
     return InterviewRoundResponse(**row)
 

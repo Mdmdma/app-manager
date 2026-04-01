@@ -115,6 +115,7 @@ async def test_health_kb_reachable(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert data["kb_status"] == "ok"
+    assert "cliproxy_status" in data
 
 
 @pytest.mark.asyncio
@@ -136,6 +137,55 @@ async def test_health_kb_unreachable(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert data["kb_status"] == "unreachable"
+    assert "cliproxy_status" in data
+
+
+@pytest.mark.asyncio
+async def test_health_cliproxy_reachable(client):
+    """GET /health should report cliproxy_status ok when CLIProxy returns 2xx."""
+    mock_ok = MagicMock(status_code=200)
+    mock_cliproxy = MagicMock(status_code=200)
+
+    async def fake_get(url, *args, **kwargs):
+        if "cliproxy" in url or "8317" in url:
+            return mock_cliproxy
+        return mock_ok
+
+    mock_client = MagicMock()
+    mock_client.get = fake_get
+    mock_client.__aenter__ = lambda self: _async_return(mock_client)
+    mock_client.__aexit__ = lambda self, *a: _async_return(None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cliproxy_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_health_cliproxy_unreachable(client):
+    """GET /health should report cliproxy_status unreachable when CLIProxy is down."""
+    import httpx as _httpx
+
+    mock_ok = MagicMock(status_code=200)
+
+    async def fake_get(url, *args, **kwargs):
+        if "cliproxy" in url or "8317" in url:
+            raise _httpx.ConnectError("Connection refused")
+        return mock_ok
+
+    mock_client = MagicMock()
+    mock_client.get = fake_get
+    mock_client.__aenter__ = lambda self: _async_return(mock_client)
+    mock_client.__aexit__ = lambda self, *a: _async_return(None)
+
+    with patch("jam.server.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.get("/api/v1/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cliproxy_status"] == "unreachable"
+    assert data["kb_status"] == "ok"
 
 
 async def _async_return(val):
@@ -1823,6 +1873,25 @@ async def test_create_interview(client):
     assert data["round_type"] == "technical"
     assert data["round_number"] == 1
     assert data["status"] == "scheduled"
+    assert data["application_id"] == app_id
+    assert data["scheduled_time"] == ""
+
+
+@pytest.mark.asyncio
+async def test_create_interview_with_scheduled_time(client):
+    app_id = await _make_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/interviews",
+        json={
+            "round_type": "technical",
+            "round_number": 2,
+            "status": "scheduled",
+            "scheduled_time": "14:30",
+        },
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["scheduled_time"] == "14:30"
     assert data["application_id"] == app_id
 
 

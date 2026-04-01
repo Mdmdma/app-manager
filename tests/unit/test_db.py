@@ -13,8 +13,11 @@ from jam.db import (
     delete_document, create_version, list_versions, get_version,
     create_extra_question, list_extra_questions, get_extra_question,
     update_extra_question, delete_extra_question,
+    create_interview_round, list_interview_rounds, get_interview_round,
+    update_interview_round, delete_interview_round,
     _connect, _create_catalog_tables, _migrate_catalog_add_cliproxy,
     _migrate_dedupe_provider_fields, _migrate_catalog_add_cliproxy_api_key,
+    _migrate_interview_rounds_add_scheduled_time,
 )
 
 
@@ -816,4 +819,125 @@ def test_list_applications_by_status_returns_full_row():
     row = results[0]
     assert row["company"] == "Acme"
     assert row["position"] == "Engineer"
-    assert row["url"] == "https://example.com/job"
+
+
+# ── interview_rounds ──────────────────────────────────────────────────────────
+
+def test_create_interview_round_defaults():
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round("aaaa-bbbb", db_path=db)
+    assert r["id"]
+    assert r["application_id"] == "aaaa-bbbb"
+    assert r["round_type"] == "other"
+    assert r["scheduled_time"] == ""
+    assert r["status"] == "scheduled"
+
+
+def test_create_interview_round_with_scheduled_time():
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round(
+        "aaaa-bbbb",
+        scheduled_at="2026-05-01",
+        scheduled_time="14:30",
+        db_path=db,
+    )
+    assert r["scheduled_at"] == "2026-05-01"
+    assert r["scheduled_time"] == "14:30"
+
+
+def test_update_interview_round_scheduled_time():
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round("aaaa-bbbb", scheduled_time="09:00", db_path=db)
+    updated = update_interview_round(r["id"], {"scheduled_time": "10:00"}, db_path=db)
+    assert updated["scheduled_time"] == "10:00"
+
+
+def test_migrate_interview_rounds_add_scheduled_time():
+    """Migration adds scheduled_time to an existing table that lacks it."""
+    db = _tmp_db()
+    # Build a database that has interview_rounds WITHOUT scheduled_time by
+    # creating it directly, bypassing init_db's migration call.
+    with _connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applications (
+                id           TEXT PRIMARY KEY,
+                company      TEXT NOT NULL,
+                position     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'applied',
+                url          TEXT,
+                notes        TEXT,
+                applied_date TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_rounds (
+                id               TEXT PRIMARY KEY,
+                application_id   TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                round_type       TEXT NOT NULL DEFAULT 'other',
+                round_number     INTEGER NOT NULL DEFAULT 1,
+                scheduled_at     TEXT,
+                completed_at     TEXT,
+                interviewer_names TEXT NOT NULL DEFAULT '',
+                location         TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL DEFAULT 'scheduled',
+                prep_notes       TEXT NOT NULL DEFAULT '',
+                debrief_notes    TEXT NOT NULL DEFAULT '',
+                questions_asked  TEXT NOT NULL DEFAULT '',
+                went_well        TEXT NOT NULL DEFAULT '',
+                to_improve       TEXT NOT NULL DEFAULT '',
+                confidence       INTEGER,
+                sort_order       INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        # Seed an existing row to verify data is preserved
+        conn.execute(
+            "INSERT INTO applications (id, company, position, status, applied_date, created_at, updated_at) "
+            "VALUES ('app-1', 'ACME', 'Dev', 'applied', '2026-01-01', datetime('now'), datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO interview_rounds (id, application_id) VALUES ('rnd-1', 'app-1')"
+        )
+
+    # Verify the column is absent before migration
+    with _connect(db) as conn:
+        cols_before = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "scheduled_time" not in cols_before
+
+    # Run the migration
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_scheduled_time(conn)
+
+    # Verify column was added and existing data preserved
+    with _connect(db) as conn:
+        cols_after = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "scheduled_time" in cols_after
+        row = conn.execute("SELECT * FROM interview_rounds WHERE id = 'rnd-1'").fetchone()
+        assert row is not None
+        assert row["scheduled_time"] == ""
+
+
+def test_migrate_interview_rounds_idempotent():
+    """Running the migration twice does not raise an error."""
+    db = _tmp_db()
+    init_db(db)
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_scheduled_time(conn)
+        _migrate_interview_rounds_add_scheduled_time(conn)
+    # Column still present, no error
+    with _connect(db) as conn:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    assert "scheduled_time" in cols

@@ -1,6 +1,6 @@
 # server-api Knowledge
 <!-- source: jam/server.py -->
-<!-- hash: f88a4bcb19e1 -->
+<!-- hash: 6bdef36a1283 -->
 <!-- updated: 2026-04-01 -->
 
 ## Public API
@@ -10,7 +10,7 @@
 | Method | Path | Response | Purpose |
 |---|---|---|---|
 | GET | `/api/v1/` | HTML | Serve main web UI (HTML_PAGE) |
-| GET | `/api/v1/health` | JSON `{status: "ok", kb_status: "ok"\|"unreachable"}` | Health check — reports jam status and kb reachability |
+| GET | `/api/v1/health` | JSON `{status: "ok", kb_status: "ok"\|"unreachable", cliproxy_status: "ok"\|"unreachable"}` | Health check — reports jam status, kb and CLIProxy reachability |
 | GET | `/api/v1/applications` | `list[Application]` | List all applications |
 | POST | `/api/v1/applications` | `Application` (201) | Create a new application (auto-creates CV + Cover Letter docs) |
 | POST | `/api/v1/applications/from-url` | `ImportFromUrlResponse` (201) | Import job posting from URL via LLM (auto-creates CV + Cover Letter docs) |
@@ -85,7 +85,7 @@
 - `DocumentResponse` — `id`, `application_id`, `doc_type`, `title`, `latex_source`, `prompt_text`, `created_at`, `updated_at`
 - `DocumentVersionResponse` — `id`, `document_id`, `version_number`, `latex_source`, `prompt_text`, `compiled_at`
 - `GenerateRequest` — `is_first_generation: bool` (default False)
-- `InterviewRoundCreate` — `round_type`, `round_number`, `scheduled_at`, `completed_at`, `interviewer_names`, `location`, `status`, `prep_notes`, `debrief_notes`, `questions_asked`, `went_well`, `to_improve`, `confidence`, `sort_order`
+- `InterviewRoundCreate` — `round_type`, `round_number`, `scheduled_at`, `scheduled_time`, `completed_at`, `interviewer_names`, `location`, `status`, `prep_notes`, `debrief_notes`, `questions_asked`, `went_well`, `to_improve`, `confidence`, `sort_order`
 - `InterviewRoundUpdate` — all optional: same fields as InterviewRoundCreate
 - `InterviewRoundResponse` — `id`, `application_id`, plus all InterviewRoundCreate fields plus `created_at`, `updated_at`
 - `OfferCreate` — `status`, `base_salary`, `currency`, `bonus`, `equity`, `signing_bonus`, `benefits`, `pto_days`, `remote_policy`, `start_date`, `expiry_date`, `notes`, `sort_order`

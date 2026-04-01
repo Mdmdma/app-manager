@@ -1564,6 +1564,10 @@ HTML_PAGE = """<!DOCTYPE html>
         <span class="connection-dot" id="kb-dot"></span>
         <span id="kb-status-text">kb</span>
       </div>
+      <div class="connection-status" id="proxy-status">
+        <span class="connection-dot" id="proxy-dot"></span>
+        <span id="proxy-status-text">proxy</span>
+      </div>
       <button class="settings-btn" onclick="switchToSettings()" id="settings-btn" title="Settings">⚙️</button>
     </div>
   </header>
@@ -1734,6 +1738,13 @@ HTML_PAGE = """<!DOCTYPE html>
             <div class="setting-value">
               <span class="connection-dot" id="kb-settings-dot" style="display: inline-block;"></span>
               <span id="kb-settings-display">Checking...</span>
+            </div>
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label">CLIProxy</label>
+            <div class="setting-value">
+              <span class="connection-dot" id="proxy-settings-dot" style="display: inline-block;"></span>
+              <span id="proxy-settings-display">Checking...</span>
             </div>
           </div>
           <div class="setting-group">
@@ -3349,6 +3360,10 @@ async function checkKbConnection() {
   const kbText = document.getElementById("kb-status-text");
   const kbSettingsDot = document.getElementById("kb-settings-dot");
   const kbSettingsDisplay = document.getElementById("kb-settings-display");
+  const proxyDot = document.getElementById("proxy-dot");
+  const proxyText = document.getElementById("proxy-status-text");
+  const proxySettingsDot = document.getElementById("proxy-settings-dot");
+  const proxySettingsDisplay = document.getElementById("proxy-settings-display");
 
   try {
     const resp = await apiFetch("GET", "/health");
@@ -3372,6 +3387,19 @@ async function checkKbConnection() {
       if (kbSettingsDot) kbSettingsDot.className = "connection-dot disconnected";
       if (kbSettingsDisplay) kbSettingsDisplay.textContent = "Unreachable";
     }
+
+    // cliproxy status from response
+    if (data.cliproxy_status === "ok") {
+      proxyDot.className = "connection-dot connected";
+      proxyText.textContent = "proxy";
+      if (proxySettingsDot) proxySettingsDot.className = "connection-dot connected";
+      if (proxySettingsDisplay) proxySettingsDisplay.textContent = "Connected";
+    } else {
+      proxyDot.className = "connection-dot disconnected";
+      proxyText.textContent = "proxy";
+      if (proxySettingsDot) proxySettingsDot.className = "connection-dot disconnected";
+      if (proxySettingsDisplay) proxySettingsDisplay.textContent = "Unreachable";
+    }
   } catch (e) {
     // jam itself is down
     jamDot.className = "connection-dot disconnected";
@@ -3383,6 +3411,11 @@ async function checkKbConnection() {
     kbText.textContent = "kb";
     if (kbSettingsDot) kbSettingsDot.className = "connection-dot disconnected";
     if (kbSettingsDisplay) kbSettingsDisplay.textContent = "Unknown";
+
+    proxyDot.className = "connection-dot disconnected";
+    proxyText.textContent = "proxy";
+    if (proxySettingsDot) proxySettingsDot.className = "connection-dot disconnected";
+    if (proxySettingsDisplay) proxySettingsDisplay.textContent = "Unknown";
   }
 }
 
@@ -4871,7 +4904,7 @@ function _ivMakeCard(item) {
   var typeLabel = roundTypes.find(function(t){ return t.v === item.round_type; });
   typeLabel = typeLabel ? typeLabel.l : item.round_type;
 
-  var dateStr = item.scheduled_at ? " \u00b7 " + item.scheduled_at : "";
+  var dateStr = item.scheduled_at ? " \u00b7 " + item.scheduled_at + (item.scheduled_time ? " " + item.scheduled_time : "") : "";
   var interviewerStr = item.interviewer_names ? " \u00b7 " + item.interviewer_names : "";
 
   // Header (DOM construction, like extra questions)
@@ -4926,10 +4959,11 @@ function _ivMakeCard(item) {
   }
 
   body.innerHTML =
-    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Type</label><select class=\\"field-input iv-round_type\\" onchange=\\"_ivScheduleSave(this)\\">" + typeOpts + "</select></div>" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Status</label><select class=\\"field-input iv-status\\" onchange=\\"_ivScheduleSave(this)\\">" + statusOpts + "</select></div>" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Scheduled</label><input type=\\"date\\" class=\\"field-input iv-scheduled_at\\" value=\\"" + _escAttr(item.scheduled_at) + "\\" onchange=\\"_ivScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Time</label><input type=\\"time\\" class=\\"field-input iv-scheduled_time\\" value=\\"" + _escAttr(item.scheduled_time || "") + "\\" onchange=\\"_ivScheduleSave(this)\\"></div>" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Interviewer(s)</label><input type=\\"text\\" class=\\"field-input iv-interviewer_names\\" value=\\"" + _escAttr(item.interviewer_names) + "\\" oninput=\\"_ivScheduleSave(this)\\"></div>" +
     "</div>" +
     "<div style=\\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
@@ -4988,6 +5022,7 @@ async function _ivSave(card, id) {
     round_type: card.querySelector(".iv-round_type").value,
     status: card.querySelector(".iv-status").value,
     scheduled_at: card.querySelector(".iv-scheduled_at").value || null,
+    scheduled_time: card.querySelector(".iv-scheduled_time").value || null,
     interviewer_names: card.querySelector(".iv-interviewer_names").value,
     location: card.querySelector(".iv-location").value,
     confidence: conf ? parseInt(conf) : null,
@@ -5002,7 +5037,7 @@ async function _ivSave(card, id) {
     var roundTypes = {phone_screen:"Phone Screen",technical:"Technical",behavioral:"Behavioral",hiring_manager:"Hiring Manager",panel:"Panel",other:"Other"};
     var preview = card.querySelector(".eq-question-preview");
     var label = roundTypes[body.round_type] || body.round_type;
-    var dateStr = body.scheduled_at ? " \u00b7 " + body.scheduled_at : "";
+    var dateStr = body.scheduled_at ? " \u00b7 " + body.scheduled_at + (body.scheduled_time ? " " + body.scheduled_time : "") : "";
     var intStr = body.interviewer_names ? " \u00b7 " + body.interviewer_names : "";
     preview.innerHTML = "<strong>" + label + "</strong>" + dateStr + intStr;
     card.querySelectorAll(".badge").forEach(function(b) { b.className = "badge badge-" + body.status; b.textContent = body.status; });

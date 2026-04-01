@@ -394,6 +394,7 @@ def _create_interview_rounds_table(conn: sqlite3.Connection) -> None:
             round_type       TEXT NOT NULL DEFAULT 'other',
             round_number     INTEGER NOT NULL DEFAULT 1,
             scheduled_at     TEXT,
+            scheduled_time   TEXT NOT NULL DEFAULT '',
             completed_at     TEXT,
             interviewer_names TEXT NOT NULL DEFAULT '',
             location         TEXT NOT NULL DEFAULT '',
@@ -410,6 +411,15 @@ def _create_interview_rounds_table(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migrate_interview_rounds_add_scheduled_time(conn: sqlite3.Connection) -> None:
+    """Add scheduled_time column to interview_rounds if it does not exist."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    if "scheduled_time" not in cols:
+        conn.execute(
+            "ALTER TABLE interview_rounds ADD COLUMN scheduled_time TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def _create_offers_table(conn: sqlite3.Connection) -> None:
@@ -454,6 +464,7 @@ def init_db(db_path: Path | None = None) -> None:
         _create_documents_tables(conn)
         _create_extra_questions_table(conn)
         _create_interview_rounds_table(conn)
+        _migrate_interview_rounds_add_scheduled_time(conn)
         _create_offers_table(conn)
 
 
@@ -965,6 +976,7 @@ def create_interview_round(
     round_type: str = "other",
     round_number: int = 1,
     scheduled_at: str | None = None,
+    scheduled_time: str = "",
     completed_at: str | None = None,
     interviewer_names: str = "",
     location: str = "",
@@ -985,15 +997,15 @@ def create_interview_round(
             """
             INSERT INTO interview_rounds
                 (id, application_id, round_type, round_number, scheduled_at,
-                 completed_at, interviewer_names, location, status, prep_notes,
-                 debrief_notes, questions_asked, went_well, to_improve,
-                 confidence, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 scheduled_time, completed_at, interviewer_names, location,
+                 status, prep_notes, debrief_notes, questions_asked, went_well,
+                 to_improve, confidence, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     datetime('now'), datetime('now'))
             """,
             (r_id, application_id, round_type, round_number, scheduled_at,
-             completed_at, interviewer_names, location, status, prep_notes,
-             debrief_notes, questions_asked, went_well, to_improve,
+             scheduled_time, completed_at, interviewer_names, location, status,
+             prep_notes, debrief_notes, questions_asked, went_well, to_improve,
              confidence, sort_order),
         )
         row = conn.execute(
