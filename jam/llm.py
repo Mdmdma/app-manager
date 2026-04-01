@@ -49,7 +49,8 @@ def _get_cliproxy_url(settings: Settings) -> str:
     return f"{base}/v1/chat/completions"
 
 
-def _api_key_for(settings: Settings) -> str:
+def _api_key_for(settings: Settings, provider: str | None = None) -> str:
+    p = provider or settings.llm_provider
     keys = {
         "openai": settings.openai_api_key,
         "anthropic": settings.anthropic_api_key,
@@ -57,7 +58,7 @@ def _api_key_for(settings: Settings) -> str:
         "ollama": "ollama",
         "cliproxy": settings.cliproxy_api_key,
     }
-    return keys.get(settings.llm_provider, "")
+    return keys.get(p, "")
 
 
 async def _call_openai_compatible(
@@ -111,15 +112,25 @@ def _parse_json(raw: str) -> dict:
     return json.loads(cleaned)
 
 
-async def llm_call(system: str, user: str, settings: Settings | None = None) -> str:
+async def llm_call(
+    system: str,
+    user: str,
+    settings: Settings | None = None,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+) -> str:
     """Generic LLM call dispatching to the configured provider.
 
     Used by generation nodes for document generation and analysis.
+
+    The optional keyword-only ``provider`` and ``model`` arguments override the
+    values from ``settings`` when provided (non-None).
     """
     settings = settings or Settings()
-    provider = settings.llm_provider
-    model = settings.llm_model
-    api_key = _api_key_for(settings)
+    provider = provider or settings.llm_provider
+    model = model or settings.llm_model
+    api_key = _api_key_for(settings, provider)
 
     if provider == "anthropic":
         return await _call_anthropic(api_key, model, system, user)

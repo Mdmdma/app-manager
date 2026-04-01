@@ -2133,3 +2133,70 @@ async def test_get_settings_returns_prompt_fields(client, isolated_db):
     assert resp.status_code == 200
     data = resp.json()
     assert data["prompt_generate_first"] == custom_prompt
+
+
+# --- Per-step model settings ---
+
+_MOCK_CATALOG_WITH_GPT4O = {
+    "providers": [
+        {
+            "id": "openai",
+            "label": "OpenAI",
+            "type": "llm",
+            "llm_models": [
+                {"id": "openai:gpt-4o", "model_id": "gpt-4o", "label": "GPT-4o",
+                 "context_window": 128000, "prompt_cost": None, "completion_cost": None},
+            ],
+            "fields": [],
+        }
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_save_step_model_valid(client):
+    """POST /settings with a valid step model ID should succeed and save the key."""
+    with patch("jam.server.get_catalog", return_value=_MOCK_CATALOG_WITH_GPT4O):
+        with patch("jam.server.set_settings_batch") as mock_batch:
+            resp = await client.post(
+                "/api/v1/settings",
+                json={"step_model_analyze_fit": "openai:gpt-4o"},
+            )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_batch.assert_called_once_with({"step_model_analyze_fit": "openai:gpt-4o"})
+
+
+@pytest.mark.asyncio
+async def test_save_step_model_invalid(client):
+    """POST /settings with an unknown step model ID should return 422."""
+    with patch("jam.server.get_catalog", return_value=_MOCK_CATALOG_WITH_GPT4O):
+        resp = await client.post(
+            "/api/v1/settings",
+            json={"step_model_analyze_fit": "nonexistent:model"},
+        )
+    assert resp.status_code == 422
+    assert "nonexistent:model" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_save_step_model_empty_clears(client):
+    """POST /settings with an empty string step model should succeed (clears override)."""
+    with patch("jam.server.set_settings_batch") as mock_batch:
+        resp = await client.post(
+            "/api/v1/settings",
+            json={"step_model_analyze_fit": ""},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_batch.assert_called_once_with({"step_model_analyze_fit": ""})
+
+
+@pytest.mark.asyncio
+async def test_get_settings_returns_step_models(client, isolated_db):
+    """GET /settings should include step_model fields when stored."""
+    _db_module.set_setting("step_model_analyze_fit", "openai:gpt-4o", db_path=isolated_db)
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["step_model_analyze_fit"] == "openai:gpt-4o"

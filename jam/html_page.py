@@ -18,7 +18,7 @@ HTML_PAGE = """<!DOCTYPE html>
   .app-container {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh;
   }
 
   /* -- Header -- */
@@ -100,6 +100,8 @@ HTML_PAGE = """<!DOCTYPE html>
   /* -- Main content -- */
   main {
     flex: 1;
+    min-height: 0;
+    overflow-y: auto;
     padding: 24px 16px 48px;
   }
 
@@ -795,7 +797,7 @@ HTML_PAGE = """<!DOCTYPE html>
     display: flex;
     padding: 24px;
     flex: 1;
-    height: calc(100vh - 64px);
+    min-height: 0;
     overflow: hidden;
   }
 
@@ -885,12 +887,20 @@ HTML_PAGE = """<!DOCTYPE html>
     overflow-y: auto;
   }
 
+  .detail-content.no-outer-scroll {
+    overflow-y: hidden;
+  }
+
   .detail-step {
     display: none;
   }
 
   .detail-step.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .detail-step h2 {
@@ -952,7 +962,7 @@ HTML_PAGE = """<!DOCTYPE html>
   .tab-btn-doc:hover { color: #4f46e5; }
   .tab-btn-doc.active { color: #4f46e5; border-bottom-color: #4f46e5; background: #fff; }
   .doc-tab-panel { display: none; }
-  .doc-tab-panel.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .doc-tab-panel.active { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
 
   /* ── Tri-split reusable pattern ── */
   .trisplit-container {
@@ -1033,6 +1043,7 @@ HTML_PAGE = """<!DOCTYPE html>
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    min-height: 0;
   }
   .trisplit-pane textarea {
     flex: 1;
@@ -1347,6 +1358,9 @@ HTML_PAGE = """<!DOCTYPE html>
     background: #f9fafb;
     border-top: 1px solid #e5e7eb;
     font-size: 0.8rem;
+    max-height: 40vh;
+    overflow-y: auto;
+    flex-shrink: 1;
   }
   .agent-feedback-panel details { margin-bottom: 6px; }
   .agent-feedback-panel summary {
@@ -1361,7 +1375,7 @@ HTML_PAGE = """<!DOCTYPE html>
     margin: 4px 0 0 0;
     font-family: inherit;
     font-size: 0.78rem;
-    max-height: 400px;
+    max-height: 200px;
     overflow-y: auto;
     padding: 4px 8px;
     border: 1px solid #e5e7eb;
@@ -1413,6 +1427,87 @@ HTML_PAGE = """<!DOCTYPE html>
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Generation progress tracker */
+  .gen-progress-tracker {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 0.75rem;
+    overflow-x: auto;
+  }
+  .gen-progress-step {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+    color: #9ca3af;
+  }
+  .gen-progress-step .step-icon {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .gen-progress-step .step-icon::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #d1d5db;
+    display: block;
+  }
+  .gen-progress-step.completed {
+    color: #059669;
+  }
+  .gen-progress-step.completed .step-icon::before {
+    content: "\\2713";
+    width: auto;
+    height: auto;
+    background: none;
+    font-size: 12px;
+    font-weight: bold;
+    border-radius: 0;
+    line-height: 16px;
+  }
+  .gen-progress-step.active {
+    color: #1a1a2e;
+    font-weight: 500;
+  }
+  .gen-progress-step.active .step-icon::before {
+    content: "";
+    width: 12px;
+    height: 12px;
+    border: 2px solid #e5e7eb;
+    border-top-color: #4f46e5;
+    background: none;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .gen-progress-step.error {
+    color: #dc2626;
+  }
+  .gen-progress-step.error .step-icon::before {
+    content: "\\2717";
+    width: auto;
+    height: auto;
+    background: none;
+    font-size: 12px;
+    font-weight: bold;
+    border-radius: 0;
+    line-height: 16px;
+  }
+  .gen-progress-sep {
+    color: #d1d5db;
+    font-size: 10px;
+    flex-shrink: 0;
+    user-select: none;
+  }
 
   /* Override detail-content layout for cv-cover step */
   #step-cv-cover.active { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -1704,6 +1799,13 @@ HTML_PAGE = """<!DOCTYPE html>
 
           <div id="ai-credentials"></div>
 
+          <details class="step-models-details" style="margin-top:var(--space-4)">
+            <summary style="cursor:pointer; font-weight:600; color:var(--text-secondary); font-size:0.92em; user-select:none; padding:4px 0;">
+              Per-Step Model Overrides
+            </summary>
+            <div id="step-model-overrides" style="margin-top:var(--space-3);"></div>
+          </details>
+
           <div id="ai-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
           <button class="btn btn-primary" style="margin-top:16px;" onclick="saveAiSettings()">Save AI Settings</button>
         </div>
@@ -1962,10 +2064,12 @@ HTML_PAGE = """<!DOCTYPE html>
               <span id="cv-save-status" class="doc-compile-status"></span>
               <span id="cv-gen-status" class="doc-compile-status"></span>
             </div>
+            <div id="cv-gen-progress" class="gen-progress-tracker" style="display:none" aria-live="polite" aria-label="CV generation progress"></div>
             <div id="cv-trisplit" class="trisplit-container">
               <div class="trisplit-pane" data-pane="0">
                 <div class="trisplit-pane-header">
                   <span>Instructions</span>
+                  <button class="btn btn-sm" onclick="_clearInstructions('cv')" title="Clear all instructions" style="font-size:0.65rem; padding:1px 6px; margin-left:auto;">Clear</button>
                   <button onclick="_togglePane('cv-trisplit',0)" title="Collapse/Expand">&#x25C0;</button>
                 </div>
                 <div class="trisplit-pane-body">
@@ -2008,10 +2112,12 @@ HTML_PAGE = """<!DOCTYPE html>
               <span id="cover_letter-save-status" class="doc-compile-status"></span>
               <span id="cover_letter-gen-status" class="doc-compile-status"></span>
             </div>
+            <div id="cover_letter-gen-progress" class="gen-progress-tracker" style="display:none" aria-live="polite" aria-label="Cover letter generation progress"></div>
             <div id="cover_letter-trisplit" class="trisplit-container">
               <div class="trisplit-pane" data-pane="0">
                 <div class="trisplit-pane-header">
                   <span>Instructions</span>
+                  <button class="btn btn-sm" onclick="_clearInstructions('cover_letter')" title="Clear all instructions" style="font-size:0.65rem; padding:1px 6px; margin-left:auto;">Clear</button>
                   <button onclick="_togglePane('cover_letter-trisplit',0)" title="Collapse/Expand">&#x25C0;</button>
                 </div>
                 <div class="trisplit-pane-body">
@@ -2388,6 +2494,14 @@ function switchDetailStep(step) {
   }
   if (step === "interviews" && currentDetailId && !_ivLoaded) { _ivLoaded = true; _ivLoad(); }
   if (step === "offers" && currentDetailId && !_ofLoaded) { _ofLoaded = true; _ofLoad(); }
+  var dc = document.querySelector(".detail-content");
+  if (dc) {
+    if (step === "cv-cover") {
+      dc.classList.add("no-outer-scroll");
+    } else {
+      dc.classList.remove("no-outer-scroll");
+    }
+  }
 }
 
 async function saveDetailForm() {
@@ -3285,6 +3399,7 @@ async function loadAiSettings() {
     _catalog = await catResp.json();
     _stored = await setResp.json();
     renderProviderDropdown();
+    renderStepModelOverrides();
     await loadTemplateSettings();
   } catch (e) {
     console.error("Failed to load AI settings:", e);
@@ -3313,6 +3428,83 @@ function renderProviderDropdown() {
 function _providerById(id) {
   if (!_catalog) return null;
   return _catalog.providers.find(function(p) { return p.id === id; }) || null;
+}
+
+// ── Per-step model overrides ────────────────────────────────────────────────
+
+const _STEP_MODEL_META = [
+  {key: "generate_or_revise", label: "Generate / Revise"},
+  {key: "analyze_fit",        label: "Analyze Fit"},
+  {key: "analyze_quality",    label: "Analyze Quality"},
+  {key: "apply_suggestions",  label: "Apply Suggestions"},
+  {key: "reduce_size",        label: "Reduce Size"},
+];
+
+function renderStepModelOverrides() {
+  const container = document.getElementById("step-model-overrides");
+  if (!container) return;
+  container.innerHTML = "";
+  if (!_catalog) return;
+
+  _STEP_MODEL_META.forEach(function(step) {
+    const settingKey = "step_model_" + step.key;
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; align-items:center; gap:12px; margin-bottom:10px;";
+
+    const lbl = document.createElement("span");
+    lbl.textContent = step.label;
+    lbl.style.cssText = "flex:0 0 160px; font-size:0.85rem; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;";
+    row.appendChild(lbl);
+
+    const sel = document.createElement("select");
+    sel.className = "field-input";
+    sel.style.cssText = "flex:1; font-size:0.85rem; padding:5px 10px;";
+    sel.setAttribute("aria-label", step.label + " model override");
+
+    const defaultOpt = document.createElement("option");
+    defaultOpt.value = "";
+    defaultOpt.textContent = "Use global default";
+    sel.appendChild(defaultOpt);
+
+    _catalog.providers.forEach(function(prov) {
+      if (!prov.llm_models || prov.llm_models.length === 0) return;
+      const grp = document.createElement("optgroup");
+      grp.label = prov.label;
+      prov.llm_models.forEach(function(m) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.label;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    });
+
+    sel.value = _stored[settingKey] || "";
+
+    sel.onchange = async function() {
+      const val = sel.value;
+      try {
+        await apiFetch("POST", "/settings", {[settingKey]: val});
+        _stored[settingKey] = val;
+        const msgEl = document.getElementById("ai-settings-msg");
+        msgEl.textContent = step.label + " model saved";
+        msgEl.className = "status-msg success";
+        msgEl.style.display = "block";
+        setTimeout(function() {
+          if (msgEl.textContent === step.label + " model saved") msgEl.style.display = "none";
+        }, 2000);
+      } catch (e) {
+        const msgEl = document.getElementById("ai-settings-msg");
+        msgEl.textContent = "Save failed: " + e.message;
+        msgEl.className = "status-msg error";
+        msgEl.style.display = "block";
+      }
+    };
+
+    row.appendChild(sel);
+    container.appendChild(row);
+  });
 }
 
 function _providerHasKey(id) {
@@ -4285,6 +4477,16 @@ function _makeInstructionField(docType, key, label, isGlobal) {
   return field;
 }
 
+function _clearInstructions(docType) {
+  var panel = document.getElementById(docType + "-instructions-panel");
+  if (!panel) return;
+  var textareas = panel.querySelectorAll(".instruction-textarea");
+  for (var i = 0; i < textareas.length; i++) {
+    textareas[i].value = "";
+  }
+  _scheduleInstructionSave(docType);
+}
+
 function _buildInstructionsFromLatex(docType, latex) {
   var panel = document.getElementById(docType + "-instructions-panel");
   if (!panel) return;
@@ -5111,6 +5313,77 @@ var _GEN_NODE_LABELS = {
   "error":              "Error"
 };
 
+var _GEN_STEP_ORDER = [
+  {key: "retrieve_kb_docs",   label: "Retrieve KB"},
+  {key: "generate_or_revise", label: "Generate"},
+  {key: "analyze_fit",        label: "Analyze fit"},
+  {key: "analyze_quality",    label: "Check quality"},
+  {key: "apply_suggestions",  label: "Apply improvements"},
+  {key: "compile_and_check",  label: "Compile"},
+  {key: "reduce_size",        label: "Reduce size"},
+  {key: "finalize",           label: "Finalize"}
+];
+
+function _initGenProgress(docType) {
+  var container = document.getElementById(docType + "-gen-progress");
+  if (!container) return;
+  container.innerHTML = "";
+  _GEN_STEP_ORDER.forEach(function(step, i) {
+    if (i > 0) {
+      var sep = document.createElement("span");
+      sep.className = "gen-progress-sep";
+      sep.textContent = "\\u203a";
+      container.appendChild(sep);
+    }
+    var el = document.createElement("span");
+    el.className = "gen-progress-step";
+    el.setAttribute("data-step-key", step.key);
+    var icon = document.createElement("span");
+    icon.className = "step-icon";
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(step.label));
+    container.appendChild(el);
+  });
+  container.style.display = "";
+}
+
+function _updateGenProgress(docType, activeNode) {
+  var container = document.getElementById(docType + "-gen-progress");
+  if (!container) return;
+  // Mark previously active step as completed
+  var prev = container.querySelector(".gen-progress-step.active");
+  if (prev) prev.className = "gen-progress-step completed";
+  // Mark new node as active (skip unknown nodes)
+  var step = container.querySelector(".gen-progress-step[data-step-key=\\"" + activeNode + "\\"]");
+  if (step) step.className = "gen-progress-step active";
+}
+
+function _completeGenProgress(docType) {
+  var container = document.getElementById(docType + "-gen-progress");
+  if (!container) return;
+  var steps = container.querySelectorAll(".gen-progress-step");
+  for (var i = 0; i < steps.length; i++) {
+    // Only mark steps that were seen (active or completed); leave pure-pending steps alone
+    // unless they precede the last completed step — mark all as completed for a clean done state
+    steps[i].className = "gen-progress-step completed";
+  }
+}
+
+function _errorGenProgress(docType) {
+  var container = document.getElementById(docType + "-gen-progress");
+  if (!container) return;
+  var active = container.querySelector(".gen-progress-step.active");
+  if (active) active.className = "gen-progress-step error";
+}
+
+function _hideGenProgress(docType) {
+  var container = document.getElementById(docType + "-gen-progress");
+  if (container) {
+    container.style.display = "none";
+    container.innerHTML = "";
+  }
+}
+
 async function _generateDoc(docType) {
   var docId = _currentDocId[docType];
   if (!docId) return;
@@ -5132,7 +5405,7 @@ async function _generateDoc(docType) {
   var currentLatex = _cmEditors[docType].getValue();
   var isFirst = /<<[A-Z\-]+:/.test(currentLatex);
 
-  _setGenStatus(docType, "Starting...", "");
+  _initGenProgress(docType);
   _showCompileOverlay(docType, true);
 
   var resp;
@@ -5143,6 +5416,7 @@ async function _generateDoc(docType) {
       body: JSON.stringify({ is_first_generation: isFirst })
     });
   } catch (e) {
+    _hideGenProgress(docType);
     _setGenStatus(docType, "Network error: " + e.message, "error");
     _showCompileOverlay(docType, false);
     return;
@@ -5150,6 +5424,7 @@ async function _generateDoc(docType) {
 
   if (!resp.ok) {
     var errData = await resp.json().catch(function() { return { detail: "Request failed" }; });
+    _hideGenProgress(docType);
     _setGenStatus(docType, errData.detail || "Generate failed", "error");
     _showCompileOverlay(docType, false);
     return;
@@ -5176,12 +5451,12 @@ async function _generateDoc(docType) {
       try { evt = JSON.parse(raw); } catch (e) { continue; }
 
       if (evt.node && evt.node !== "done" && evt.node !== "error") {
-        var label = _GEN_NODE_LABELS[evt.node] || evt.node;
-        _setGenStatus(docType, label, "");
+        _updateGenProgress(docType, evt.node);
       }
 
       if (evt.node === "done") {
         _showCompileOverlay(docType, false);
+        _completeGenProgress(docType);
         if (evt.latex) {
           _cmEditors[docType].setValue(evt.latex);
           _buildInstructionsFromLatex(docType, evt.latex);
@@ -5214,6 +5489,7 @@ async function _generateDoc(docType) {
 
       if (evt.node === "error") {
         _showCompileOverlay(docType, false);
+        _errorGenProgress(docType);
         _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
       }
     }

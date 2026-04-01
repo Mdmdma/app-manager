@@ -143,6 +143,19 @@ def _get_prompt(key: str, default: str) -> str:
     return stored.get(key) or default
 
 
+def _resolve_step_model(step_key: str) -> tuple[str | None, str | None]:
+    """Return (provider, model) override for a generation step, or (None, None) for global default."""
+    from jam.db import get_all_settings
+    stored = get_all_settings()
+    catalog_id = stored.get(f"step_model_{step_key}", "")
+    if not catalog_id:
+        return None, None
+    parts = catalog_id.split(":", 1)
+    if len(parts) != 2:
+        return None, None
+    return parts[0], parts[1]
+
+
 def _extract_inline_comments(latex: str) -> list[str]:
     """Return list of user comment strings from '% [COMMENT: ...]' markers."""
     return [m.group(1).strip() for m in _COMMENT_RE.finditer(latex)]
@@ -494,7 +507,8 @@ async def generate_or_revise(state: DocumentGenerationState) -> dict:
 {state["current_latex"]}"""
 
     try:
-        raw = await llm_call(system, user, Settings())
+        step_provider, step_model = _resolve_step_model("generate_or_revise")
+        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         return {
             "error": str(exc),
@@ -528,7 +542,8 @@ async def analyze_fit(state: DocumentGenerationState) -> dict:
 {state["current_latex"][:6000]}"""
 
     try:
-        feedback = await llm_call(system, user, Settings())
+        step_provider, step_model = _resolve_step_model("analyze_fit")
+        feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         feedback = ""
         return {
@@ -550,7 +565,8 @@ async def analyze_quality(state: DocumentGenerationState) -> dict:
     user = f"=== DOCUMENT ===\n{state['current_latex'][:6000]}"
 
     try:
-        feedback = await llm_call(system, user, Settings())
+        step_provider, step_model = _resolve_step_model("analyze_quality")
+        feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception:
         feedback = ""
     return {
@@ -583,7 +599,8 @@ async def apply_suggestions(state: DocumentGenerationState) -> dict:
 {state["current_latex"]}"""
 
     try:
-        raw = await llm_call(system, user, Settings())
+        step_provider, step_model = _resolve_step_model("apply_suggestions")
+        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         return {
             "progress_events": [
@@ -661,7 +678,8 @@ async def reduce_size(state: DocumentGenerationState) -> dict:
     user = state["current_latex"]
 
     try:
-        raw = await llm_call(system, user, Settings())
+        step_provider, step_model = _resolve_step_model("reduce_size")
+        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         return {
             "compile_attempts": attempt,

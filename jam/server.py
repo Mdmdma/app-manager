@@ -78,6 +78,9 @@ _PLAIN_KEYS = {
     "prompt_generate_first", "prompt_generate_revise",
     "prompt_analyze_fit", "prompt_analyze_quality",
     "prompt_apply_suggestions", "prompt_reduce_size",
+    "step_model_generate_or_revise", "step_model_analyze_fit",
+    "step_model_analyze_quality", "step_model_apply_suggestions",
+    "step_model_reduce_size",
 }
 
 DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
@@ -346,6 +349,11 @@ class SettingsRequest(BaseModel):
     prompt_analyze_quality: Optional[str] = None
     prompt_apply_suggestions: Optional[str] = None
     prompt_reduce_size: Optional[str] = None
+    step_model_generate_or_revise: Optional[str] = None
+    step_model_analyze_fit: Optional[str] = None
+    step_model_analyze_quality: Optional[str] = None
+    step_model_apply_suggestions: Optional[str] = None
+    step_model_reduce_size: Optional[str] = None
 
 
 class DocType(str, Enum):
@@ -848,6 +856,22 @@ async def save_settings_endpoint(req: SettingsRequest):
                 raise HTTPException(
                     status_code=422,
                     detail=f"Model '{updates['llm_model']}' does not belong to provider '{updates['llm_provider']}'",
+                )
+    # Validate per-step model overrides against catalog
+    _STEP_MODEL_KEYS = [
+        "step_model_generate_or_revise", "step_model_analyze_fit",
+        "step_model_analyze_quality", "step_model_apply_suggestions",
+        "step_model_reduce_size",
+    ]
+    step_model_updates = {k: v for k, v in updates.items() if k in _STEP_MODEL_KEYS and v}
+    if step_model_updates:
+        cat = get_catalog()
+        valid_ids = {m["id"] for p in cat["providers"] for m in p.get("llm_models", [])}
+        for key, val in step_model_updates.items():
+            if val not in valid_ids:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Unknown model '{val}' for {key}",
                 )
     set_settings_batch(updates)
     for key, value in updates.items():

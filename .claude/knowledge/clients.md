@@ -1,13 +1,13 @@
 # clients Knowledge
 <!-- source: jam/llm.py, jam/kb_client.py, jam/gmail_client.py -->
-<!-- hash: 5830475f380f -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: e8e778967547 -->
+<!-- updated: 2026-04-01 -->
 
 ## llm.py -- Public API
 
 | Function | Signature | Purpose |
 |---|---|---|
-| `llm_call` | `async (system: str, user: str, settings: Settings \| None = None) -> str` | Generic LLM call dispatching to configured provider; used by generation nodes |
+| `llm_call` | `async (system: str, user: str, settings: Settings \| None = None, *, provider: str \| None = None, model: str \| None = None) -> str` | Generic LLM call dispatching to configured provider; optional `provider`/`model` keyword args override settings values (used by generation nodes for per-step model selection) |
 | `extract_job_info` | `async (text: str, settings: Settings \| None = None) -> dict` | Parse job posting text via LLM; returns structured dict with company, position, location, salary_range, requirements, description, opening_date, closing_date |
 
 ### Provider dispatch
@@ -18,6 +18,7 @@
 | `groq` | `https://api.groq.com/openai/v1/chat/completions` | `Bearer {groq_api_key}` |
 | `ollama` | `{ollama_base_url}/v1/chat/completions` | none |
 | `anthropic` | `https://api.anthropic.com/v1/messages` | `x-api-key` header, anthropic-version `2023-06-01` |
+| `cliproxy` | `{cliproxy_base_url}/v1/chat/completions` | `Bearer {cliproxy_api_key}` |
 
 - OpenAI, Groq, and Ollama use the same `_call_openai_compatible` path (OpenAI chat completions format).
 - Anthropic uses a dedicated `_call_anthropic` path (Messages API format, max_tokens 8192).
@@ -27,7 +28,7 @@
 
 | Function | Purpose |
 |---|---|
-| `_api_key_for(settings)` | Resolve API key string from provider name |
+| `_api_key_for(settings, provider=None)` | Resolve API key string from explicit provider or `settings.llm_provider` |
 | `_get_ollama_url(settings)` | Build Ollama chat completions URL from `ollama_base_url` |
 | `_call_openai_compatible(url, api_key, model, system, user)` | HTTP call for OpenAI-format APIs |
 | `_call_anthropic(api_key, model, system, user)` | HTTP call for Anthropic Messages API |

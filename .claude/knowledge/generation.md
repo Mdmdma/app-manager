@@ -1,7 +1,7 @@
 # generation Knowledge
 <!-- source: jam/generation.py -->
-<!-- hash: bab28a158df8 -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: b49d5390a0e1 -->
+<!-- updated: 2026-04-01 -->
 
 ## Public API
 
@@ -158,6 +158,7 @@ analyze_fit → analyze_quality → finalize → END
 | Function | Purpose |
 |---|---|
 | `_get_prompt(key, default)` | Load prompt template from DB settings, fall back to default constant |
+| `_resolve_step_model(step_key)` | Return `(provider, model)` override for a generation step from DB settings (`step_model_{key}`), or `(None, None)` for global default. Catalog ID format: `"provider:model_id"`. |
 | `_extract_inline_comments(latex)` | Parse `% [COMMENT: ...]` markers from LaTeX source |
 | `_locked_sections(instructions_json)` | Return section keys where `enabled==False` |
 | `_extract_kb_doc_content(doc)` | Extract text from KB doc (precedence: `text` > `content` > `summary+title` > `title`) |
@@ -204,6 +205,7 @@ Key settings: `kb_retrieval_namespaces` (JSON list), `kb_include_namespaces` (JS
 
 - `generation_graph` and `critique_graph` are compiled at module import time (line 759/781), which means `langgraph` must be importable whenever `jam.generation` is imported
 - `Settings()` is instantiated per-call inside each LLM node (no caching or injection)
+- **Per-step model selection**: Each LLM node calls `_resolve_step_model(step_key)` to check for a per-step model override in DB settings (keys: `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_apply_suggestions`, `step_model_reduce_size`). Overrides are passed as `provider`/`model` kwargs to `llm_call`. `None` values fall back to global settings.
 - KB context is hard-truncated to 6000 chars in `generate_or_revise` — long documents may lose context
 - Job description is truncated to 500 chars for the search query, 3000 chars in the fit-analysis prompt
 - `_compile_latex_bytes` requires `tectonic` system binary in PATH

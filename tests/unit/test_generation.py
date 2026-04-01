@@ -20,6 +20,7 @@ from jam.generation import (
     _format_instructions,
     _get_prompt,
     _locked_sections,
+    _resolve_step_model,
     _restore_locked_sections,
     _strip_latex_fences,
     analyze_fit,
@@ -1391,3 +1392,88 @@ async def test_compile_and_check_passes_none_images_when_not_set():
     mock_compile.assert_called_once()
     call_kwargs = mock_compile.call_args[1]
     assert call_kwargs["images"] is None
+
+
+# ── _resolve_step_model ──────────────────────────────────────────────────────
+
+
+def test_resolve_step_model_with_override():
+    """Returns (provider, model) tuple when a valid catalog_id is stored."""
+    with patch("jam.db.get_all_settings", return_value={"step_model_analyze_fit": "groq:llama-3.3-70b-versatile"}):
+        result = _resolve_step_model("analyze_fit")
+    assert result == ("groq", "llama-3.3-70b-versatile")
+
+
+def test_resolve_step_model_no_override():
+    """Returns (None, None) when the key is absent from stored settings."""
+    with patch("jam.db.get_all_settings", return_value={}):
+        result = _resolve_step_model("analyze_fit")
+    assert result == (None, None)
+
+
+def test_resolve_step_model_empty_string():
+    """Returns (None, None) when the stored value is an empty string."""
+    with patch("jam.db.get_all_settings", return_value={"step_model_analyze_fit": ""}):
+        result = _resolve_step_model("analyze_fit")
+    assert result == (None, None)
+
+
+def test_resolve_step_model_invalid_format():
+    """Returns (None, None) when the stored value has no colon separator."""
+    with patch("jam.db.get_all_settings", return_value={"step_model_analyze_fit": "no-colon-here"}):
+        result = _resolve_step_model("analyze_fit")
+    assert result == (None, None)
+
+
+# ── per-step model passed to llm_call ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_node_passes_step_model():
+    """generate_or_revise should forward the resolved provider/model to llm_call."""
+    state = _base_state(is_first_generation=True, kb_docs=[])
+
+    with patch("jam.generation._resolve_step_model", return_value=("anthropic", "claude-sonnet-4-6")), \
+         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        mock_llm.return_value = r"\section{Summary}Generated"
+        await generate_or_revise(state)
+
+    mock_llm.assert_called_once()
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") == "anthropic"
+    assert kwargs.get("model") == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_analyze_fit_node_passes_step_model():
+    """analyze_fit should forward the resolved provider/model to llm_call."""
+    state = _base_state(current_latex=r"\section{Summary}Content")
+
+    with patch("jam.generation._resolve_step_model", return_value=("anthropic", "claude-sonnet-4-6")), \
+         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        mock_llm.return_value = "Fit feedback"
+        await analyze_fit(state)
+
+    mock_llm.assert_called_once()
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") == "anthropic"
+    assert kwargs.get("model") == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_node_uses_global_when_no_override():
+    """When _resolve_step_model returns (None, None), llm_call is called with provider=None, model=None."""
+    state = _base_state(current_latex=r"\section{Summary}Content")
+
+    with patch("jam.generation._resolve_step_model", return_value=(None, None)), \
+         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        mock_llm.return_value = "Fit feedback"
+        await analyze_fit(state)
+
+    mock_llm.assert_called_once()
+    _, kwargs = mock_llm.call_args
+    assert kwargs.get("provider") is None
+    assert kwargs.get("model") is None

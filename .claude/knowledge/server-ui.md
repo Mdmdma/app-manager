@@ -1,7 +1,7 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: 8bd44ebe6844 -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: 38107b4a7e00 -->
+<!-- updated: 2026-04-01 -->
 
 ## Public API
 
@@ -16,6 +16,9 @@
 - Dashboard view (`#dashboard-view`): stats row + actions bar + applications container
 - Settings view (`#settings-view`): sidebar nav + content panels
 - Detail view (`#detail-view`): sidebar with application info + step navigation + step panels
+- Detail step layout: `.detail-step.active` uses `display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden` to maintain flex chain from `.detail-content` through to inner panels
+- Flex height chain (viewport-constrained): `.detail-view` (`height: calc(100vh - 64px)`) → `.detail-container` (`height: 100%`) → `.detail-content` (`flex: 1; min-height: 0`) → `.detail-step.active` (`overflow: hidden`) → `.doc-tab-panel.active` (`overflow: hidden`) → `.trisplit-container` (`flex: 1`) → `.trisplit-pane` → `.trisplit-pane-body` (`min-height: 0`). Each element has `overflow: hidden` or `min-height: 0` to prevent content from pushing the layout taller than the viewport.
+- `.detail-content.no-outer-scroll`: modifier class (applied via JS on cv-cover step) sets `overflow-y: hidden` so inner panels own their scroll
 - Max-width: 1200px for dashboard, 912px card pattern for settings content
 
 ### Tabs / Views
@@ -109,6 +112,25 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - For cover letters: one field per paragraph block (>10 chars, separated by blank lines), keyed `__para_N__`
 - Each non-global field has a "restrict edits" toggle (checkbox)
 - State serialised to JSON via `_getInstructionsAsJson()` and stored in `prompt_text` field
+- Pane header has a "Clear" button (`_clearInstructions(docType)`) that empties all textareas and triggers debounced auto-save
+
+### Generation Progress Tracker
+Horizontal multi-step progress bar shown during document generation. One tracker per doc type: `#cv-gen-progress`, `#cover_letter-gen-progress` (placed between doc-list-bar and trisplit-container, `aria-live="polite"`).
+- Built dynamically by `_initGenProgress()` from `_GEN_STEP_ORDER` (8 steps: Retrieve KB → Generate → Analyze fit → Check quality → Apply improvements → Compile → Reduce size → Finalize)
+- Each step has a fixed 16×16px `.step-icon` container to prevent layout shift; states: pending (gray dot), active (indigo spinner reusing `@keyframes spin`), completed (green ✓), error (red ✗)
+- Steps separated by `›` characters (`.gen-progress-sep`)
+- `_generateDoc` uses `_initGenProgress` → `_updateGenProgress` per SSE node → `_completeGenProgress` on done / `_errorGenProgress` on error
+- `_critiqueDoc` still uses `_setGenStatus` text-only approach (no tracker)
+- Conditional steps (e.g. `reduce_size`) stay pending-gray if skipped; all marked green on done
+
+### Per-Step Model Overrides (inside AI Models section)
+Collapsible `<details>` section below global provider/model dropdowns.
+- Container: `#step-model-overrides` inside `<details class="step-models-details">`
+- JS constant: `_STEP_MODEL_META` — array of `{key, label}` for 5 generation steps
+- Each row: flex layout with step label + `<select class="field-input">` dropdown
+- Options: "Use global default" (value="") + `<optgroup>` per provider with models from `_catalog`
+- Values use catalog model ID format: `"provider:model_id"` (e.g. `"openai:gpt-4o"`)
+- Auto-saves on change, updates `_stored`, shows success toast via `#ai-settings-msg`
 
 ### System Prompts Settings Section (`#section-prompts`)
 Six textareas for editing the system prompts used by the agentic generation pipeline:
@@ -131,7 +153,8 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - Status: `.status-msg`, `.status-msg.success`, `.status-msg.error`
 - Custom: `.stats-row`, `.stat-card`, `.connection-status`, `.connection-dot`, `.actions-bar`, `.applications-grid`, `.app-tile`, `.empty-state`
 - Settings: `.settings-container`, `.settings-sidebar`, `.settings-sidebar-menu`, `.settings-content`, `.settings-section`
-- Document editor: `.tab-bar`, `.tab-btn-doc`, `.doc-tab-panel`, `.trisplit-container`, `.trisplit-pane`, `.trisplit-pane-header`, `.trisplit-pane-body`, `.doc-list-bar`, `.doc-preview-frame`, `.doc-version-bar`, `.doc-compile-status`
+- Document editor: `.tab-bar`, `.tab-btn-doc`, `.doc-tab-panel`, `.trisplit-container`, `.trisplit-pane`, `.trisplit-pane-header`, `.trisplit-pane-body`, `.doc-list-bar`, `.doc-preview-frame`, `.doc-version-bar`, `.doc-compile-status`, `.agent-feedback-panel` (max-height: 40vh, overflow-y: auto, flex-shrink: 1), `.feedback-text` (max-height: 200px, overflow-y: auto)
+- Generation progress: `.gen-progress-tracker` (flex row below doc-list-bar), `.gen-progress-step` (`.completed` green ✓, `.active` spinner, `.error` red ✗), `.gen-progress-sep` (› separator), `.step-icon` (fixed 16×16px to prevent layout shift)
 - Instructions panel: `.instructions-panel`, `.instruction-field`, `.instruction-field.global`, `.instruction-field-header`, `.instruction-field-title`, `.instruction-toggle-wrap`, `.instruction-toggle-label`, `.instruction-toggle`, `.instruction-toggle-slider`, `.instruction-textarea`
 - PDF viewer: `.pdf-placeholder` (centered message div), `.pdf-canvas-page` (per-page canvas element)
 - Crop modal (circle): `.crop-modal-overlay`, `.crop-modal`, `.crop-container`, `.crop-overlay-canvas`, `.crop-modal-title`, `.crop-modal-hint`, `.crop-modal-footer`
@@ -152,8 +175,9 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `switchToSettings()` / `switchToDashboard()` — toggle main views
 - `switchSettingsSection(section)` — activate settings sidebar section
 - `checkKbConnection()` — GET `/health`, updates both jam and kb header/settings indicators
-- `loadAiSettings()` — GET `/catalog` + GET `/settings`, populates AI settings
+- `loadAiSettings()` — GET `/catalog` + GET `/settings`, populates AI settings, then calls `renderStepModelOverrides()`
 - `renderProviderDropdown()` — fills `#ai-provider` select
+- `renderStepModelOverrides()` — builds per-step model override dropdowns in `#step-model-overrides` container; each dropdown has "Use global default" + grouped `<optgroup>` per provider from catalog; auto-saves on change via `POST /settings` with `step_model_*` key
 - `onProviderChange()` — updates model dropdown and credential fields on provider change
 - `renderCredentialFields(prov)` — builds credential input fields with show/hide toggle
 - `saveAiSettings()` — POST `/settings` with current AI config
@@ -172,7 +196,7 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `connectGmail()` — GET `/gmail/auth-url`, opens auth URL in new window
 - `disconnectGmail()` — POST `/gmail/disconnect`
 - `openDetailPage(appId)` — loads application, resets doc state, shows detail view
-- `switchDetailStep(step)` — activates detail step panel; lazy-loads CV docs on first visit
+- `switchDetailStep(step)` — activates detail step panel; lazy-loads CV docs on first visit; toggles `.no-outer-scroll` on `.detail-content` (added for cv-cover, removed for other steps)
 - `_switchDocTab(docType)` — switches between cv/cover_letter document tabs
 - `_loadDocuments(docType)` — GET `/applications/:id/documents?doc_type=<type>`, populates selector
 - `_clearEditor(docType)` — calls `_buildInstructionsFromLatex(docType, '')`, clears latex editor (`setValue("")`) and sets preview div to "No document selected" placeholder
@@ -186,6 +210,7 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `_scheduleInstructionSave(docType)` — debounces `_saveCurrentDoc` on instruction field changes (2000ms auto-save); called from `oninput` on instruction textareas and `onchange` on toggle checkboxes
 - `_initCmEditors()` — initialises CodeMirror 5 on both latex textareas; stores instances in `_cmEditors`; called at page init
 - `_makeInstructionField(docType, key, label, isGlobal)` — builds and returns one `.instruction-field` DOM element; `isGlobal=true` adds `.global` class and omits toggle; sets `data-section-key` attribute
+- `_clearInstructions(docType)` — empties all `.instruction-textarea` values in the panel and triggers `_scheduleInstructionSave`
 - `_buildInstructionsFromLatex(docType, latex)` — (re)builds `#${docType}-instructions-panel`; always starts with global field; for CV parses `\section{Name}` occurrences; for cover_letter splits by blank lines; preserves existing textarea values and toggle states for matching keys
 - `_getInstructionsAsJson(docType)` — serialises panel state to JSON string `{general, sections:[{key,label,text,enabled}]}`; returns `""` if panel is empty
 - `_setInstructionsFromJson(docType, jsonStr)` — populates existing fields from JSON string; handles invalid JSON gracefully (no crash)
@@ -193,6 +218,11 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `_compileDoc(docType)` — saves doc (reads latex via `getValue()`, instructions via `_getInstructionsAsJson`), POST `/documents/:id/compile`, calls `_renderPdf` with cache-busting URL (does not create a version)
 - `_loadVersions(docType)` — GET `/documents/:id/versions`, renders version buttons
 - `_restoreVersion(docType, version)` — restores latex source via `setValue(version.latex_source)`, rebuilds instruction panel from latex, populates from version prompt_text JSON, and saves (no auto-compile)
+- `_initGenProgress(docType)` — builds step tracker from `_GEN_STEP_ORDER`, shows `#<type>-gen-progress` container
+- `_updateGenProgress(docType, activeNode)` — promotes previous active step to completed, marks new node active
+- `_completeGenProgress(docType)` — marks all steps completed (green) on generation done
+- `_errorGenProgress(docType)` — marks current active step as error (red)
+- `_hideGenProgress(docType)` — hides and clears the tracker
 - `_setDocStatus(docType, msg, cls)` — updates status span; clears after 3s on success
 - `_togglePane(containerId, paneIndex)` — collapses/expands a trisplit pane
 - `openCropModal(dataUri, previewId, settingKey)` — opens circular crop modal for profile photo

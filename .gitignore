@@ -27,6 +27,7 @@ shared
 
 # Playwright
 .playwright-mcp/
+*.png
 
 # OS
 .DS_Store

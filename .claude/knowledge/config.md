@@ -1,7 +1,7 @@
 # config Knowledge
 <!-- source: jam/config.py -->
-<!-- hash: 10742ccf877e -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: 3a6a50f9cc80 -->
+<!-- updated: 2026-04-01 -->
 
 ## Public API
 

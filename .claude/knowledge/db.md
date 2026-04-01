@@ -1,7 +1,7 @@
 # db Knowledge
 <!-- source: jam/db.py -->
-<!-- hash: fbaf5dee60c1 -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: 4e6a62167747 -->
+<!-- updated: 2026-04-01 -->
 
 ## Public API
 

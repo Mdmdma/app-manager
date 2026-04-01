@@ -1,7 +1,7 @@
 # server-api Knowledge
 <!-- source: jam/server.py -->
-<!-- hash: f50c90eda6eb -->
-<!-- updated: 2026-03-31 -->
+<!-- hash: f88a4bcb19e1 -->
+<!-- updated: 2026-04-01 -->
 
 ## Public API
 
@@ -58,7 +58,8 @@
 - `DEFAULT_CV_TEMPLATE` — raw LaTeX string: article-class CV scaffold with 3-minipage header (headshot via `\includegraphics{photo.png}`, name/role, contact links) + sections for Summary, Experience, Education, Skills; requires `graphicx` package
 - `DEFAULT_COVER_LETTER_TEMPLATE` — raw LaTeX string: letter-class cover letter scaffold with opening/body/closing paragraphs + `\fromsig{\includegraphics[height=1.2cm]{signature.png}}` after closing; requires `graphicx` package
 - `_ENV_MAP` — dict mapping settings key → environment variable name (for keys that set env vars on save)
-- `_PLAIN_KEYS` — set of settings keys returned as-is (not masked): `llm_provider`, `llm_model`, `ollama_base_url`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_user_email`, `kb_retrieval_namespaces`, `kb_retrieval_n_results`, `kb_retrieval_padding`, `kb_include_namespaces`, `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size`
+- `_PLAIN_KEYS` — set of settings keys returned as-is (not masked): `llm_provider`, `llm_model`, `ollama_base_url`, `cliproxy_base_url`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_user_email`, `kb_retrieval_namespaces`, `kb_retrieval_n_results`, `kb_retrieval_padding`, `kb_include_namespaces`, `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size`, `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_apply_suggestions`, `step_model_reduce_size`
+- **Per-step model validation**: `save_settings_endpoint` validates `step_model_*` values against the catalog's model IDs (format: `"provider:model_id"`). Empty string clears the override. Values not in `_ENV_MAP` (read from DB directly by generation module).
 - `_pdf_cache: dict[str, bytes]` — in-memory cache mapping document IDs to their most recently compiled PDF bytes
 
 ### Helper functions
@@ -77,7 +78,7 @@
 - `Application` — domain model: `id` (UUID), all fields above plus `created_at`, `updated_at`
 - `ImportFromUrlRequest` — `url: str` (min_length=1, max_length=2048)
 - `ImportFromUrlResponse` — `application: Application`, `extraction: dict`, `kb_ingested: bool`
-- `SettingsRequest` — `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`, `llm_provider`, `llm_model`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_client_secret`, `gmail_refresh_token`, `gmail_user_email`, `kb_retrieval_namespaces` (str), `kb_retrieval_n_results` (int), `kb_retrieval_padding` (int), `kb_include_namespaces` (str), `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size` — all optional
+- `SettingsRequest` — `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`, `llm_provider`, `llm_model`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_client_secret`, `gmail_refresh_token`, `gmail_user_email`, `kb_retrieval_namespaces` (str), `kb_retrieval_n_results` (int), `kb_retrieval_padding` (int), `kb_include_namespaces` (str), `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size`, `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_apply_suggestions`, `step_model_reduce_size` — all optional
 - `DocType` — str enum: `cv`, `cover_letter`
 - `DocumentCreate` — `doc_type: DocType`, `title`, `latex_source`, `prompt_text`
 - `DocumentUpdate` — optional: `title`, `latex_source`, `prompt_text`

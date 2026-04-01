@@ -348,3 +348,102 @@ async def test_llm_call_cliproxy_custom_base_url():
     assert result == "ok"
     call_args = instance.post.call_args
     assert "proxy.internal:5000" in call_args[0][0]
+
+
+# ── llm_call / _api_key_for override parameters ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_llm_call_with_provider_override():
+    """provider= kwarg overrides settings.llm_provider; Anthropic endpoint used."""
+    settings = Settings(
+        llm_provider="openai",
+        openai_api_key="sk-openai",
+        anthropic_api_key="sk-anthropic",
+        llm_model="claude-sonnet-4-6",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"content": [{"text": "anthropic response"}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings, provider="anthropic")
+
+    assert result == "anthropic response"
+    call_args = instance.post.call_args
+    assert "api.anthropic.com" in call_args[0][0]
+    # OpenAI endpoint must NOT have been called
+    assert "api.openai.com" not in call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_llm_call_with_model_override():
+    """model= kwarg overrides settings.llm_model in the request payload."""
+    settings = Settings(
+        llm_provider="openai",
+        openai_api_key="sk-test",
+        llm_model="gpt-4o",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "mini response"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings, model="gpt-4o-mini")
+
+    assert result == "mini response"
+    call_args = instance.post.call_args
+    payload = call_args[1]["json"]
+    assert payload["model"] == "gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_llm_call_overrides_none_uses_global():
+    """Passing provider=None and model=None falls back to settings values."""
+    settings = Settings(
+        llm_provider="openai",
+        openai_api_key="sk-test",
+        llm_model="gpt-4o",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "global response"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings, provider=None, model=None)
+
+    assert result == "global response"
+    call_args = instance.post.call_args
+    assert "api.openai.com" in call_args[0][0]
+    payload = call_args[1]["json"]
+    assert payload["model"] == "gpt-4o"
+
+
+def test_api_key_for_explicit_provider():
+    """_api_key_for resolves the key for the explicit provider, ignoring settings.llm_provider."""
+    settings = Settings(
+        llm_provider="openai",
+        openai_api_key="sk-openai",
+        anthropic_api_key="sk-anthropic",
+    )
+    assert _api_key_for(settings, "anthropic") == "sk-anthropic"
