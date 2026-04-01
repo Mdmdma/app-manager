@@ -56,6 +56,8 @@ _ENV_MAP = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
     "groq_api_key":      "GROQ_API_KEY",
     "ollama_base_url":   "OLLAMA_BASE_URL",
+    "cliproxy_base_url": "CLIPROXY_BASE_URL",
+    "cliproxy_api_key":  "CLIPROXY_API_KEY",
     "llm_provider":      "LLM_PROVIDER",
     "llm_model":         "LLM_MODEL",
     "gmail_client_id": "GMAIL_CLIENT_ID",
@@ -65,7 +67,7 @@ _ENV_MAP = {
 }
 
 _PLAIN_KEYS = {
-    "llm_provider", "llm_model", "ollama_base_url",
+    "llm_provider", "llm_model", "ollama_base_url", "cliproxy_base_url",
     "cv_latex_template", "cover_letter_latex_template",
     "gmail_client_id", "gmail_user_email",
     "kb_retrieval_namespaces", "kb_retrieval_n_results",
@@ -317,6 +319,8 @@ class SettingsRequest(BaseModel):
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     ollama_base_url: Optional[str] = None
+    cliproxy_base_url: Optional[str] = None
+    cliproxy_api_key: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     cv_latex_template: Optional[str] = None
@@ -812,6 +816,7 @@ async def get_settings_endpoint():
         "openai_api_key_set": bool(stored.get("openai_api_key")),
         "anthropic_api_key_set": bool(stored.get("anthropic_api_key")),
         "groq_api_key_set": bool(stored.get("groq_api_key")),
+        "cliproxy_api_key_set": bool(stored.get("cliproxy_api_key")),
         "gmail_client_secret_set": bool(stored.get("gmail_client_secret", "")),
         "gmail_refresh_token_set": bool(stored.get("gmail_refresh_token", "")),
     }

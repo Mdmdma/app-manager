@@ -14,6 +14,7 @@ from jam.db import (
     create_extra_question, list_extra_questions, get_extra_question,
     update_extra_question, delete_extra_question,
     _connect, _create_catalog_tables, _migrate_catalog_add_cliproxy,
+    _migrate_dedupe_provider_fields, _migrate_catalog_add_cliproxy_api_key,
 )
 
 
@@ -204,7 +205,177 @@ def test_migrate_catalog_add_cliproxy_is_idempotent():
         field_count = conn.execute(
             "SELECT COUNT(*) FROM provider_fields WHERE provider_id = 'cliproxy'"
         ).fetchone()[0]
-        assert field_count == 1
+        assert field_count == 2  # cliproxy_base_url + cliproxy_api_key
+
+
+# ── Dedupe provider_fields migration ─────────────────────────────────────────
+
+def test_migrate_dedupe_provider_fields_removes_duplicates():
+    """Duplicate (provider_id, key) rows are reduced to the one with the lowest id.
+
+    The old provider_fields schema had no UNIQUE constraint, which allowed
+    duplicate rows.  This test recreates that schema directly (without using
+    _create_catalog_tables) so we can seed the duplicates that triggered the bug.
+    """
+    db = _tmp_db()
+    with _connect(db) as conn:
+        # Create providers table (needed for FK)
+        conn.execute(
+            """
+            CREATE TABLE providers (
+                id TEXT PRIMARY KEY,
+                label TEXT NOT NULL,
+                type TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        # Create provider_fields WITHOUT the UNIQUE constraint (old schema)
+        conn.execute(
+            """
+            CREATE TABLE provider_fields (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                provider_id TEXT NOT NULL REFERENCES providers(id),
+                key         TEXT NOT NULL,
+                label       TEXT NOT NULL,
+                input_type  TEXT NOT NULL DEFAULT 'text',
+                placeholder TEXT NOT NULL DEFAULT '',
+                required    INTEGER NOT NULL DEFAULT 0,
+                applies_to  TEXT NOT NULL DEFAULT 'both',
+                sort_order  INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO providers (id, label, type, sort_order) VALUES (?,?,?,?)",
+            ("openai", "OpenAI", "llm", 0),
+        )
+        # First insert — this is the one that should survive
+        conn.execute(
+            """INSERT INTO provider_fields
+               (provider_id, key, label, input_type, placeholder, required, applies_to, sort_order)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("openai", "openai_api_key", "OpenAI API Key", "password", "sk-...", 1, "llm", 0),
+        )
+        first_id = conn.execute(
+            "SELECT id FROM provider_fields WHERE provider_id='openai' AND key='openai_api_key'"
+        ).fetchone()[0]
+        # Duplicate insert (simulates the bug: seed + migration both inserted)
+        conn.execute(
+            """INSERT INTO provider_fields
+               (provider_id, key, label, input_type, placeholder, required, applies_to, sort_order)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("openai", "openai_api_key", "OpenAI API Key duplicate", "password", "sk-dup", 1, "llm", 0),
+        )
+        count_before = conn.execute(
+            "SELECT COUNT(*) FROM provider_fields WHERE provider_id='openai' AND key='openai_api_key'"
+        ).fetchone()[0]
+        assert count_before == 2
+
+    # Run the dedup migration
+    with _connect(db) as conn:
+        _migrate_dedupe_provider_fields(conn)
+
+    # Only one row should remain, and it must be the original (lowest id)
+    with _connect(db) as conn:
+        rows = conn.execute(
+            "SELECT id, label FROM provider_fields WHERE provider_id='openai' AND key='openai_api_key'"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0]["id"] == first_id
+        assert rows[0]["label"] == "OpenAI API Key"
+
+
+def test_migrate_dedupe_provider_fields_is_noop_when_no_duplicates():
+    """Migration must not delete anything when all (provider_id, key) pairs are unique."""
+    db = _tmp_db()
+    init_db(db)
+
+    with _connect(db) as conn:
+        count_before = conn.execute("SELECT COUNT(*) FROM provider_fields").fetchone()[0]
+
+    with _connect(db) as conn:
+        _migrate_dedupe_provider_fields(conn)
+
+    with _connect(db) as conn:
+        count_after = conn.execute("SELECT COUNT(*) FROM provider_fields").fetchone()[0]
+
+    assert count_after == count_before
+
+
+def test_init_db_has_no_duplicate_provider_fields():
+    """init_db() must produce exactly one provider_fields row per (provider_id, key)."""
+    db = _tmp_db()
+    init_db(db)
+
+    with _connect(db) as conn:
+        rows = conn.execute(
+            "SELECT provider_id, key, COUNT(*) as cnt FROM provider_fields GROUP BY provider_id, key HAVING cnt > 1"
+        ).fetchall()
+    assert rows == [], f"Duplicate provider_fields rows found: {list(rows)}"
+
+
+# ── cliproxy_api_key migration ────────────────────────────────────────────────
+
+def test_catalog_cliproxy_provider_has_api_key_field():
+    """After init_db the cliproxy provider must expose a cliproxy_api_key field."""
+    db = _tmp_db()
+    init_db(db)
+    catalog = get_catalog(db)
+    cliproxy = next(p for p in catalog["providers"] if p["id"] == "cliproxy")
+    keys = [f["key"] for f in cliproxy["fields"]]
+    assert "cliproxy_api_key" in keys
+
+
+def test_migrate_catalog_add_cliproxy_api_key_inserts_on_existing_db():
+    """Migration inserts cliproxy_api_key into a db that already has cliproxy_base_url."""
+    db = _tmp_db()
+    # Simulate a database that has cliproxy but only the base_url field
+    with _connect(db) as conn:
+        _create_catalog_tables(conn)
+        conn.execute(
+            "INSERT INTO providers (id, label, type, sort_order) VALUES (?,?,?,?)",
+            ("cliproxy", "CLIProxy (Claude Max)", "llm", 4),
+        )
+        conn.execute(
+            """INSERT INTO provider_fields
+               (provider_id, key, label, input_type, placeholder, required, applies_to, sort_order)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("cliproxy", "cliproxy_base_url", "CLIProxy Base URL", "url", "http://localhost:8317", 1, "llm", 0),
+        )
+
+    # Run the migration
+    with _connect(db) as conn:
+        _migrate_catalog_add_cliproxy_api_key(conn)
+
+    # Verify the new field was inserted and the existing one was preserved
+    with _connect(db) as conn:
+        rows = conn.execute(
+            "SELECT key, input_type, placeholder, sort_order FROM provider_fields WHERE provider_id = 'cliproxy' ORDER BY sort_order"
+        ).fetchall()
+        keys = [r["key"] for r in rows]
+        assert "cliproxy_base_url" in keys
+        assert "cliproxy_api_key" in keys
+        api_key_row = next(r for r in rows if r["key"] == "cliproxy_api_key")
+        assert api_key_row["input_type"] == "password"
+        assert api_key_row["placeholder"] == "sk-..."
+        assert api_key_row["sort_order"] == 1
+
+
+def test_migrate_catalog_add_cliproxy_api_key_is_idempotent():
+    """Running the migration twice must not raise or duplicate rows."""
+    db = _tmp_db()
+    init_db(db)  # cliproxy_api_key already seeded via _seed_catalog
+
+    # Second run must succeed silently
+    with _connect(db) as conn:
+        _migrate_catalog_add_cliproxy_api_key(conn)
+
+    with _connect(db) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM provider_fields WHERE provider_id = 'cliproxy' AND key = 'cliproxy_api_key'"
+        ).fetchone()[0]
+    assert count == 1
 
 
 # ── Application CRUD ─────────────────────────────────────────────────────────

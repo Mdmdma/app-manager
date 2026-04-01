@@ -55,7 +55,7 @@ def _api_key_for(settings: Settings) -> str:
         "anthropic": settings.anthropic_api_key,
         "groq": settings.groq_api_key,
         "ollama": "ollama",
-        "cliproxy": "",
+        "cliproxy": settings.cliproxy_api_key,
     }
     return keys.get(settings.llm_provider, "")
 

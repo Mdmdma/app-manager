@@ -99,7 +99,8 @@ def _create_catalog_tables(conn: sqlite3.Connection) -> None:
             required    INTEGER NOT NULL DEFAULT 0,
             applies_to  TEXT NOT NULL DEFAULT 'both'
                             CHECK (applies_to IN ('llm', 'embedding', 'both')),
-            sort_order  INTEGER NOT NULL DEFAULT 0
+            sort_order  INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(provider_id, key)
         )
         """
     )
@@ -164,6 +165,7 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
             ("groq",      "groq_api_key",      "Groq API Key",      "password", "gsk_...",                 1, "llm", 0),
             ("ollama",    "ollama_base_url",   "Ollama Base URL",   "url",      "http://localhost:11434",  1, "llm", 0),
             ("cliproxy",  "cliproxy_base_url", "CLIProxy Base URL", "url",      "http://localhost:8317",   1, "llm", 0),
+            ("cliproxy",  "cliproxy_api_key",  "CLIProxy API Key",  "password", "sk-...",                  1, "llm", 1),
         ],
     )
 
@@ -330,6 +332,42 @@ def _migrate_catalog_add_cliproxy(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_dedupe_provider_fields(conn: sqlite3.Connection) -> None:
+    """Remove duplicate provider_fields rows, keeping the one with the lowest id.
+
+    Duplicates can arise on databases that were created before the
+    UNIQUE(provider_id, key) constraint was added to provider_fields — the
+    original _seed_catalog used a plain executemany (no conflict handling) and
+    _migrate_catalog_add_cliproxy guarded with a SELECT COUNT check, but both
+    could still insert the same row twice in certain upgrade sequences.
+
+    This migration is idempotent: if there are no duplicates it is a no-op.
+    """
+    conn.execute(
+        """
+        DELETE FROM provider_fields
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM provider_fields GROUP BY provider_id, key
+        )
+        """
+    )
+
+
+def _migrate_catalog_add_cliproxy_api_key(conn: sqlite3.Connection) -> None:
+    """Add cliproxy_api_key field to existing databases."""
+    exists = conn.execute(
+        "SELECT COUNT(*) FROM provider_fields WHERE provider_id = ? AND key = ?",
+        ("cliproxy", "cliproxy_api_key"),
+    ).fetchone()[0]
+    if not exists:
+        conn.execute(
+            """INSERT INTO provider_fields
+               (provider_id, key, label, input_type, placeholder, required, applies_to, sort_order)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("cliproxy", "cliproxy_api_key", "CLIProxy API Key", "password", "sk-...", 1, "llm", 1),
+        )
+
+
 def _create_extra_questions_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -409,6 +447,8 @@ def init_db(db_path: Path | None = None) -> None:
         _create_catalog_tables(conn)
         _seed_catalog(conn)
         _migrate_catalog_add_cliproxy(conn)
+        _migrate_dedupe_provider_fields(conn)
+        _migrate_catalog_add_cliproxy_api_key(conn)
         _create_applications_tables(conn)
         _migrate_applications_table(conn)
         _create_documents_tables(conn)
