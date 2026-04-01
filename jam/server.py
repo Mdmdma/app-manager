@@ -32,6 +32,21 @@ from jam.db import (
     create_version as db_create_version,
     list_versions as db_list_versions,
     get_version as db_get_version,
+    create_extra_question as db_create_extra_question,
+    list_extra_questions as db_list_extra_questions,
+    get_extra_question as db_get_extra_question,
+    update_extra_question as db_update_extra_question,
+    delete_extra_question as db_delete_extra_question,
+    create_interview_round as db_create_interview_round,
+    list_interview_rounds as db_list_interview_rounds,
+    get_interview_round as db_get_interview_round,
+    update_interview_round as db_update_interview_round,
+    delete_interview_round as db_delete_interview_round,
+    create_offer as db_create_offer,
+    list_offers as db_list_offers,
+    get_offer as db_get_offer,
+    update_offer as db_update_offer,
+    delete_offer as db_delete_offer,
 )
 from jam.llm import extract_job_info
 from jam.kb_client import ingest_url, ingest_text
@@ -55,6 +70,12 @@ _PLAIN_KEYS = {
     "gmail_client_id", "gmail_user_email",
     "kb_retrieval_namespaces", "kb_retrieval_n_results",
     "kb_retrieval_padding", "kb_include_namespaces",
+    "personal_full_name", "personal_email", "personal_phone",
+    "personal_website", "personal_address",
+    "personal_photo", "personal_signature",
+    "prompt_generate_first", "prompt_generate_revise",
+    "prompt_analyze_fit", "prompt_analyze_quality",
+    "prompt_apply_suggestions", "prompt_reduce_size",
 }
 
 DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
@@ -66,6 +87,7 @@ DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
 \usepackage{titlesec}
 \usepackage{hyperref}
 \usepackage{xcolor}
+\usepackage{graphicx}
 
 \definecolor{accent}{HTML}{1D4ED8}
 \hypersetup{colorlinks=true, urlcolor=accent}
@@ -79,20 +101,25 @@ DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
 \begin{document}
 
 % ── Header ────────────────────────────────────────────────────────────────────
-{\centering
-  {\Huge\bfseries <<FULL-NAME: Jane Doe>>}\\[4pt]
-  {\large\color{gray} <<TARGET-ROLE: Senior Software Engineer>>}\\[5pt]
-  \small
-  \href{mailto:<<EMAIL: jane.doe@example.com>>}{<<EMAIL: jane.doe@example.com>>}
-  \enspace$\cdot$\enspace
-  <<PHONE: +49 170 123 4567>>
-  \enspace$\cdot$\enspace
-  <<CITY-COUNTRY: Berlin, Germany>>
-  \enspace$\cdot$\enspace
-  \href{https://linkedin.com/in/<<LINKEDIN-SLUG: jane-doe-123>>}{LinkedIn}
-  \enspace$\cdot$\enspace
-  \href{https://github.com/<<GITHUB-USER: janedoe>>}{GitHub}
-\par}
+\noindent
+\begin{minipage}[c]{0.2\textwidth}
+    \includegraphics[width=0.69\textwidth]{photo.png}
+\end{minipage}%
+\hfill
+\begin{minipage}[c]{0.45\textwidth}
+    \centering
+    \textbf{\Huge \scshape <<FULL-NAME: Jane Doe>>} \\[4pt]
+    {\large\color{gray} <<TARGET-ROLE: Senior Software Engineer>>}
+\end{minipage}%
+\hfill
+\begin{minipage}[c]{0.3\textwidth}
+    \raggedleft
+    \small \href{mailto:<<EMAIL: jane.doe@example.com>>}{\underline{<<EMAIL: jane.doe@example.com>>}} \\[3pt]
+    \small <<PHONE: +49 170 123 4567>> \\[3pt]
+    \small <<CITY-COUNTRY: Berlin, Germany>> \\[3pt]
+    \small \href{https://linkedin.com/in/<<LINKEDIN-SLUG: jane-doe-123>>}{\underline{LinkedIn}} \\[3pt]
+    \small \href{https://github.com/<<GITHUB-USER: janedoe>>}{\underline{GitHub}}
+\end{minipage}
 \vspace{4pt}
 
 % ── Summary ───────────────────────────────────────────────────────────────────
@@ -143,6 +170,7 @@ DEFAULT_COVER_LETTER_TEMPLATE = r"""\documentclass[11pt,a4paper]{letter}
 \usepackage[T1]{fontenc}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{hyperref}
+\usepackage{graphicx}
 
 \hypersetup{colorlinks=true, urlcolor=blue}
 
@@ -173,6 +201,9 @@ DEFAULT_COVER_LETTER_TEMPLATE = r"""\documentclass[11pt,a4paper]{letter}
 <<CLOSING-PARAGRAPH: 1-2 sentences. Express enthusiasm and include a concrete call to action. Example: "I would welcome the opportunity to discuss my application in an interview. I am available from the week of 6 April onwards and happy to accommodate your schedule.">>
 
 \closing{<<SIGN-OFF: Best regards>>,}
+
+\vspace{-10pt}
+\fromsig{\includegraphics[height=1.2cm]{signature.png}}
 
 \end{letter}
 \end{document}"""
@@ -298,6 +329,19 @@ class SettingsRequest(BaseModel):
     kb_retrieval_n_results: Optional[int] = None
     kb_retrieval_padding: Optional[int] = None
     kb_include_namespaces: Optional[str] = None
+    personal_full_name: Optional[str] = None
+    personal_email: Optional[str] = None
+    personal_phone: Optional[str] = None
+    personal_website: Optional[str] = None
+    personal_address: Optional[str] = None
+    personal_photo: Optional[str] = None
+    personal_signature: Optional[str] = None
+    prompt_generate_first: Optional[str] = None
+    prompt_generate_revise: Optional[str] = None
+    prompt_analyze_fit: Optional[str] = None
+    prompt_analyze_quality: Optional[str] = None
+    prompt_apply_suggestions: Optional[str] = None
+    prompt_reduce_size: Optional[str] = None
 
 
 class DocType(str, Enum):
@@ -336,6 +380,138 @@ class DocumentVersionResponse(BaseModel):
     latex_source: str
     prompt_text: str
     compiled_at: str
+
+
+class ExtraQuestionCreate(BaseModel):
+    question: str = ""
+    answer: str = ""
+    word_cap: Optional[int] = None
+    sort_order: int = 0
+
+
+class ExtraQuestionUpdate(BaseModel):
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    word_cap: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+class ExtraQuestionResponse(BaseModel):
+    id: str
+    application_id: str
+    question: str
+    answer: str
+    word_cap: Optional[int] = None
+    sort_order: int
+    created_at: str
+    updated_at: str
+
+
+class InterviewRoundCreate(BaseModel):
+    round_type: str = "other"
+    round_number: int = 1
+    scheduled_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    interviewer_names: str = ""
+    location: str = ""
+    status: str = "scheduled"
+    prep_notes: str = ""
+    debrief_notes: str = ""
+    questions_asked: str = ""
+    went_well: str = ""
+    to_improve: str = ""
+    confidence: Optional[int] = None
+    sort_order: int = 0
+
+
+class InterviewRoundUpdate(BaseModel):
+    round_type: Optional[str] = None
+    round_number: Optional[int] = None
+    scheduled_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    interviewer_names: Optional[str] = None
+    location: Optional[str] = None
+    status: Optional[str] = None
+    prep_notes: Optional[str] = None
+    debrief_notes: Optional[str] = None
+    questions_asked: Optional[str] = None
+    went_well: Optional[str] = None
+    to_improve: Optional[str] = None
+    confidence: Optional[int] = None
+    sort_order: Optional[int] = None
+
+
+class InterviewRoundResponse(BaseModel):
+    id: str
+    application_id: str
+    round_type: str
+    round_number: int
+    scheduled_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    interviewer_names: str
+    location: str
+    status: str
+    prep_notes: str
+    debrief_notes: str
+    questions_asked: str
+    went_well: str
+    to_improve: str
+    confidence: Optional[int] = None
+    sort_order: int
+    created_at: str
+    updated_at: str
+
+
+class OfferCreate(BaseModel):
+    status: str = "pending"
+    base_salary: Optional[float] = None
+    currency: str = "EUR"
+    bonus: str = ""
+    equity: str = ""
+    signing_bonus: str = ""
+    benefits: str = ""
+    pto_days: Optional[int] = None
+    remote_policy: str = ""
+    start_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    notes: str = ""
+    sort_order: int = 0
+
+
+class OfferUpdate(BaseModel):
+    status: Optional[str] = None
+    base_salary: Optional[float] = None
+    currency: Optional[str] = None
+    bonus: Optional[str] = None
+    equity: Optional[str] = None
+    signing_bonus: Optional[str] = None
+    benefits: Optional[str] = None
+    pto_days: Optional[int] = None
+    remote_policy: Optional[str] = None
+    start_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    notes: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class OfferResponse(BaseModel):
+    id: str
+    application_id: str
+    status: str
+    base_salary: Optional[float] = None
+    currency: str
+    bonus: str
+    equity: str
+    signing_bonus: str
+    benefits: str
+    pto_days: Optional[int] = None
+    remote_policy: str
+    start_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    notes: str
+    sort_order: int
+    created_at: str
+    updated_at: str
 
 
 async def _fetch_page_text(url: str) -> tuple[str, str]:
@@ -579,12 +755,13 @@ async def test_kb_retrieval(body: dict):
     """Test KB document retrieval for debugging. Returns detailed error info."""
     from jam.kb_client import list_namespace_documents, search_documents
     from jam.config import Settings
+    from collections import defaultdict
 
     settings = Settings()
     namespace_ids = body.get("namespace_ids", [])
     query = body.get("query", "test")
 
-    result = {
+    result: dict = {
         "kb_api_url": settings.kb_api_url,
         "namespace_ids": namespace_ids,
         "query": query,
@@ -592,6 +769,7 @@ async def test_kb_retrieval(body: dict):
         "search_error": None,
         "list_results": None,
         "list_error": None,
+        "namespace_summaries": None,
     }
 
     # Test semantic search
@@ -603,13 +781,25 @@ async def test_kb_retrieval(body: dict):
     except Exception as e:
         result["search_error"] = str(e)
 
-    # Test list_namespace_documents
+    # Test list_namespace_documents per namespace
     if namespace_ids:
-        try:
-            list_results = await list_namespace_documents(namespace_ids, settings=settings)
-            result["list_results"] = list_results
-        except Exception as e:
-            result["list_error"] = str(e)
+        summaries: list[dict] = []
+        for ns_id in namespace_ids:
+            summary: dict = {"namespace_id": ns_id, "documents": [], "error": None}
+            try:
+                chunks = await list_namespace_documents([ns_id], settings=settings)
+                by_doc: dict[str, dict] = {}
+                for chunk in chunks:
+                    doc_id = chunk.get("doc_id") or chunk.get("id", "")
+                    if doc_id not in by_doc:
+                        file_name = chunk.get("metadata", {}).get("file_name", doc_id)
+                        by_doc[doc_id] = {"doc_id": doc_id, "file_name": file_name, "chunks": 0}
+                    by_doc[doc_id]["chunks"] += 1
+                summary["documents"] = list(by_doc.values())
+            except Exception as e:
+                summary["error"] = str(e)
+            summaries.append(summary)
+        result["namespace_summaries"] = summaries
 
     return result
 
@@ -640,6 +830,20 @@ async def save_settings_endpoint(req: SettingsRequest):
             del updates[tpl_key]
     if not updates:
         raise HTTPException(status_code=422, detail="No settings provided")
+    # Validate model belongs to selected provider
+    if "llm_provider" in updates and "llm_model" in updates:
+        catalog = get_catalog()
+        provider = next(
+            (p for p in catalog["providers"] if p["id"] == updates["llm_provider"]),
+            None,
+        )
+        if provider:
+            valid_models = {m["model_id"] for m in provider.get("llm_models", [])}
+            if updates["llm_model"] not in valid_models:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Model '{updates['llm_model']}' does not belong to provider '{updates['llm_provider']}'",
+                )
     set_settings_batch(updates)
     for key, value in updates.items():
         if key in _ENV_MAP:
@@ -653,6 +857,24 @@ async def get_default_templates():
     return {
         "cv": DEFAULT_CV_TEMPLATE,
         "cover_letter": DEFAULT_COVER_LETTER_TEMPLATE,
+    }
+
+
+@router.get("/prompts/defaults")
+async def get_default_prompts():
+    """Return the built-in default system prompts."""
+    from jam.generation import (
+        PROMPT_GENERATE_FIRST, PROMPT_GENERATE_REVISE,
+        PROMPT_ANALYZE_FIT, PROMPT_ANALYZE_QUALITY,
+        PROMPT_APPLY_SUGGESTIONS, PROMPT_REDUCE_SIZE,
+    )
+    return {
+        "prompt_generate_first": PROMPT_GENERATE_FIRST,
+        "prompt_generate_revise": PROMPT_GENERATE_REVISE,
+        "prompt_analyze_fit": PROMPT_ANALYZE_FIT,
+        "prompt_analyze_quality": PROMPT_ANALYZE_QUALITY,
+        "prompt_apply_suggestions": PROMPT_APPLY_SUGGESTIONS,
+        "prompt_reduce_size": PROMPT_REDUCE_SIZE,
     }
 
 
@@ -761,6 +983,178 @@ async def delete_document_endpoint(doc_id: str):
     return None
 
 
+# ── Extra questions ──────────────────────────────────────────────────────────
+
+@router.get(
+    "/applications/{app_id}/questions",
+    response_model=list[ExtraQuestionResponse],
+)
+async def list_questions(app_id: str):
+    """List all extra questions for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    rows = db_list_extra_questions(app_id)
+    return [ExtraQuestionResponse(**r) for r in rows]
+
+
+@router.post(
+    "/applications/{app_id}/questions",
+    response_model=ExtraQuestionResponse,
+    status_code=201,
+)
+async def create_question(app_id: str, req: ExtraQuestionCreate):
+    """Create a new extra question for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    row = db_create_extra_question(
+        application_id=app_id,
+        question=req.question,
+        answer=req.answer,
+        word_cap=req.word_cap,
+        sort_order=req.sort_order,
+    )
+    return ExtraQuestionResponse(**row)
+
+
+@router.put("/questions/{question_id}", response_model=ExtraQuestionResponse)
+async def update_question(question_id: str, req: ExtraQuestionUpdate):
+    """Update an extra question."""
+    if not db_get_extra_question(question_id):
+        raise HTTPException(status_code=404, detail="Question not found")
+    fields = req.model_dump(exclude_none=True)
+    row = db_update_extra_question(question_id, fields)
+    return ExtraQuestionResponse(**row)
+
+
+@router.delete("/questions/{question_id}", status_code=204)
+async def delete_question(question_id: str):
+    """Delete an extra question."""
+    if not db_delete_extra_question(question_id):
+        raise HTTPException(status_code=404, detail="Question not found")
+    return None
+
+
+# ── Interview rounds ────────────────────────────────────────────────────────
+
+@router.get(
+    "/applications/{app_id}/interviews",
+    response_model=list[InterviewRoundResponse],
+)
+async def list_interviews(app_id: str):
+    """List all interview rounds for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    rows = db_list_interview_rounds(app_id)
+    return [InterviewRoundResponse(**r) for r in rows]
+
+
+@router.post(
+    "/applications/{app_id}/interviews",
+    response_model=InterviewRoundResponse,
+    status_code=201,
+)
+async def create_interview(app_id: str, req: InterviewRoundCreate):
+    """Create a new interview round for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    row = db_create_interview_round(
+        application_id=app_id,
+        round_type=req.round_type,
+        round_number=req.round_number,
+        scheduled_at=req.scheduled_at,
+        completed_at=req.completed_at,
+        interviewer_names=req.interviewer_names,
+        location=req.location,
+        status=req.status,
+        prep_notes=req.prep_notes,
+        debrief_notes=req.debrief_notes,
+        questions_asked=req.questions_asked,
+        went_well=req.went_well,
+        to_improve=req.to_improve,
+        confidence=req.confidence,
+        sort_order=req.sort_order,
+    )
+    return InterviewRoundResponse(**row)
+
+
+@router.put("/interviews/{interview_id}", response_model=InterviewRoundResponse)
+async def update_interview(interview_id: str, req: InterviewRoundUpdate):
+    """Update an interview round."""
+    if not db_get_interview_round(interview_id):
+        raise HTTPException(status_code=404, detail="Interview round not found")
+    fields = req.model_dump(exclude_none=True)
+    row = db_update_interview_round(interview_id, fields)
+    return InterviewRoundResponse(**row)
+
+
+@router.delete("/interviews/{interview_id}", status_code=204)
+async def delete_interview(interview_id: str):
+    """Delete an interview round."""
+    if not db_delete_interview_round(interview_id):
+        raise HTTPException(status_code=404, detail="Interview round not found")
+    return None
+
+
+# ── Offers ──────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/applications/{app_id}/offers",
+    response_model=list[OfferResponse],
+)
+async def list_offers_endpoint(app_id: str):
+    """List all offers for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    rows = db_list_offers(app_id)
+    return [OfferResponse(**r) for r in rows]
+
+
+@router.post(
+    "/applications/{app_id}/offers",
+    response_model=OfferResponse,
+    status_code=201,
+)
+async def create_offer_endpoint(app_id: str, req: OfferCreate):
+    """Create a new offer for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    row = db_create_offer(
+        application_id=app_id,
+        status=req.status,
+        base_salary=req.base_salary,
+        currency=req.currency,
+        bonus=req.bonus,
+        equity=req.equity,
+        signing_bonus=req.signing_bonus,
+        benefits=req.benefits,
+        pto_days=req.pto_days,
+        remote_policy=req.remote_policy,
+        start_date=req.start_date,
+        expiry_date=req.expiry_date,
+        notes=req.notes,
+        sort_order=req.sort_order,
+    )
+    return OfferResponse(**row)
+
+
+@router.put("/offers/{offer_id}", response_model=OfferResponse)
+async def update_offer_endpoint(offer_id: str, req: OfferUpdate):
+    """Update an offer."""
+    if not db_get_offer(offer_id):
+        raise HTTPException(status_code=404, detail="Offer not found")
+    fields = req.model_dump(exclude_none=True)
+    row = db_update_offer(offer_id, fields)
+    return OfferResponse(**row)
+
+
+@router.delete("/offers/{offer_id}", status_code=204)
+async def delete_offer_endpoint(offer_id: str):
+    """Delete an offer."""
+    if not db_delete_offer(offer_id):
+        raise HTTPException(status_code=404, detail="Offer not found")
+    return None
+
+
 def _parse_tectonic_error(raw_stderr: str) -> str:
     """Extract the most useful error line from tectonic stderr output."""
     lines = raw_stderr.splitlines()
@@ -773,6 +1167,25 @@ def _parse_tectonic_error(raw_stderr: str) -> str:
         return f"{summary}\n\n{raw_stderr}"
     # No structured error found — return truncated raw output
     return raw_stderr[:2000]
+
+
+def _write_settings_images(tmpdir: str, stored: dict) -> None:
+    """Decode personal_photo / personal_signature data-URIs and write to tmpdir."""
+    import base64
+    for key, filename in [("personal_photo", "photo"), ("personal_signature", "signature")]:
+        data_uri = stored.get(key, "")
+        if not data_uri.startswith("data:"):
+            continue
+        try:
+            header, b64 = data_uri.split(",", 1)
+            # header like "data:image/png;base64"
+            mime = header.split(":")[1].split(";")[0]  # "image/png"
+            ext = mime.split("/")[1]  # "png"
+            img_bytes = base64.b64decode(b64)
+            with open(os.path.join(tmpdir, f"{filename}.{ext}"), "wb") as fh:
+                fh.write(img_bytes)
+        except Exception:
+            pass  # skip malformed data URIs
 
 
 async def _compile_latex(latex_source: str) -> bytes:
@@ -794,6 +1207,9 @@ async def _compile_latex(latex_source: str) -> bytes:
         pdf_path = os.path.join(tmpdir, "document.pdf")
         with open(tex_path, "w") as f:
             f.write(latex_source)
+
+        stored = get_all_settings()
+        _write_settings_images(tmpdir, stored)
 
         proc = await asyncio.create_subprocess_exec(
             "tectonic", tex_path, "--untrusted",
@@ -818,6 +1234,27 @@ async def _compile_latex(latex_source: str) -> bytes:
             return f.read()
 
 
+def _inject_pdf_metadata(pdf_bytes: bytes, title: str = "", author: str = "") -> bytes:
+    """Inject title and author metadata into PDF bytes using pymupdf."""
+    import fitz
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    md = doc.metadata or {}
+    md.update({"title": title, "author": author})
+    doc.set_metadata(md)
+    result = doc.tobytes()
+    doc.close()
+    return result
+
+
+def _build_pdf_metadata(position: str = "") -> dict:
+    """Build PDF metadata dict from application context and personal settings."""
+    stored = get_all_settings()
+    return {
+        "title": position or "",
+        "author": stored.get("personal_full_name", ""),
+    }
+
+
 @router.post("/documents/{doc_id}/compile")
 async def compile_document_endpoint(doc_id: str):
     """Compile a document's LaTeX source to PDF via tectonic."""
@@ -833,6 +1270,11 @@ async def compile_document_endpoint(doc_id: str):
         prompt_text=doc.get("prompt_text", ""),
     )
 
+    app_row = db_get_application(doc["application_id"])
+    position = app_row.get("position", "") if app_row else ""
+    meta = _build_pdf_metadata(position=position)
+    pdf_bytes = _inject_pdf_metadata(pdf_bytes, **meta)
+
     # Store in cache for GET endpoint
     _pdf_cache[doc_id] = pdf_bytes
 
@@ -844,6 +1286,7 @@ async def compile_document_endpoint(doc_id: str):
 
 
 
+@router.head("/documents/{doc_id}/pdf")
 @router.get("/documents/{doc_id}/pdf")
 async def get_document_pdf(doc_id: str):
     """Return the most recently compiled PDF for a document."""
@@ -878,6 +1321,12 @@ async def compile_version_endpoint(version_id: str):
 
     pdf_bytes = await _compile_latex(ver["latex_source"])
 
+    doc = db_get_document(ver["document_id"])
+    app_row = db_get_application(doc["application_id"]) if doc else None
+    position = app_row.get("position", "") if app_row else ""
+    meta = _build_pdf_metadata(position=position)
+    pdf_bytes = _inject_pdf_metadata(pdf_bytes, **meta)
+
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -888,6 +1337,7 @@ async def compile_version_endpoint(version_id: str):
 class GenerateRequest(BaseModel):
     """Request body for the document generation endpoint."""
     is_first_generation: bool = False
+    critique_only: bool = False
 
 
 @router.post("/documents/{doc_id}/generate")
@@ -899,7 +1349,7 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
     final event has ``node: "done"`` and carries ``latex``, ``page_count``,
     ``fit_feedback``, ``quality_feedback``, and an optional ``error`` field.
     """
-    from jam.generation import generation_graph
+    from jam.generation import generation_graph, critique_graph
 
     doc = db_get_document(doc_id)
     if not doc:
@@ -939,10 +1389,12 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
         "error": None,
     }
 
+    graph = critique_graph if req.critique_only else generation_graph
+
     async def event_stream():
         final_state = None
         try:
-            async for chunk in generation_graph.astream(
+            async for chunk in graph.astream(
                 initial_state, stream_mode="values"
             ):
                 final_state = chunk
@@ -955,7 +1407,7 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
             return
 
         # Persist final result to DB
-        if final_state and final_state.get("final_latex"):
+        if final_state and final_state.get("final_latex") and not req.critique_only:
             db_update_document(doc_id, {"latex_source": final_state["final_latex"]})
             db_create_version(
                 document_id=doc_id,
@@ -963,7 +1415,8 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
                 prompt_text=doc.get("prompt_text", ""),
             )
             if final_state.get("final_pdf"):
-                _pdf_cache[doc_id] = final_state["final_pdf"]
+                meta = _build_pdf_metadata(position=app_row.get("position", ""))
+                _pdf_cache[doc_id] = _inject_pdf_metadata(final_state["final_pdf"], **meta)
 
         result_event = {
             "node": "done",

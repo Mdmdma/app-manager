@@ -25,6 +25,9 @@ shared
 # Database
 *.db
 
+# Playwright
+.playwright-mcp/
+
 # OS
 .DS_Store
 Thumbs.db

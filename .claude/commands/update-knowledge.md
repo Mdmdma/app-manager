@@ -3,7 +3,7 @@
 Regenerate `.claude/knowledge/` files to match the current source code.
 
 ## Argument
-`$ARGUMENTS` — a module name (`config`, `server-api`, `server-ui`) or `all`.
+`$ARGUMENTS` — a module name (`config`, `server-api`, `server-ui`, `db`, `generation`, `clients`) or `all`.
 
 ## Module Mapping
 
@@ -12,6 +12,9 @@ Regenerate `.claude/knowledge/` files to match the current source code.
 | `config` | `jam/config.py` | `.claude/knowledge/config.md` |
 | `server-api` | `jam/server.py` | `.claude/knowledge/server-api.md` |
 | `server-ui` | `jam/html_page.py` | `.claude/knowledge/server-ui.md` |
+| `db` | `jam/db.py` | `.claude/knowledge/db.md` |
+| `generation` | `jam/generation.py` | `.claude/knowledge/generation.md` |
+| `clients` | `jam/llm.py`, `jam/kb_client.py`, `jam/gmail_client.py` | `.claude/knowledge/clients.md` |
 
 ## Steps
 
@@ -22,6 +25,9 @@ Regenerate `.claude/knowledge/` files to match the current source code.
 
 ### 2. For each module, check staleness
 Run: `sha256sum <source_file> | cut -c1-12`
+
+For multi-source modules (e.g. `clients`), concatenate all source files then hash:
+Run: `cat <file1> <file2> <file3> | sha256sum | cut -c1-12`
 
 Compare against the `<!-- hash: ... -->` comment in the knowledge file.
 - If hashes match: report `<module>: up to date` and skip.
@@ -58,6 +64,9 @@ Compare against the `<!-- hash: ... -->` comment in the knowledge file.
 
 For `server-api`: focus on endpoints, Pydantic models, and API patterns.
 For `server-ui`: focus on HTML_PAGE components, design tokens, and JS helpers.
+For `db`: focus on tables, CRUD functions, migration patterns, and `_connect()` usage.
+For `generation`: focus on state TypedDict, graph nodes, compile loop, and LLM/KB integration.
+For `clients`: focus on public functions across all 3 source files, provider patterns, and shared conventions.
 
 ### 3b. Check downstream impact (after regeneration)
 
@@ -66,9 +75,12 @@ functions or changed signatures), identify downstream modules using this table:
 
 | Module changed | Check downstream modules |
 |---|---|
-| config | server |
+| config | clients, db, generation, server-api |
 | server-api | (none — leaf) |
 | server-ui | (none — leaf) |
+| db | generation, server-api |
+| generation | server-api |
+| clients | generation, server-api |
 
 For each downstream module, grep for usage of the changed symbols:
 ```bash

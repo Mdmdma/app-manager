@@ -9,16 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import operator
 import os
 import re
 import shutil
 import tempfile
+from collections import defaultdict
 from typing import Annotated, TypedDict
 
 import fitz  # pymupdf
 
 from jam.config import Settings
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -43,6 +47,10 @@ class DocumentGenerationState(TypedDict):
     job_description: str
     instructions_json: str  # prompt_text JSON from DB
     is_first_generation: bool
+
+    # ── Image assets (base64 data URIs, populated in retrieve_kb_docs) ──
+    personal_photo: str         # base64 data URI or ""
+    personal_signature: str     # base64 data URI or ""
 
     # ── Derived / populated during graph execution ───────────────
     kb_docs: list[dict]
@@ -81,6 +89,58 @@ class DocumentGenerationState(TypedDict):
 _COMMENT_RE = re.compile(r"%\s*\[COMMENT:\s*(.*?)\]", re.IGNORECASE)
 
 _MAX_SIZE_ATTEMPTS = 3
+
+# ---------------------------------------------------------------------------
+# Default system prompt templates (configurable via DB settings)
+# ---------------------------------------------------------------------------
+
+PROMPT_GENERATE_FIRST = """\
+You are an expert CV/cover-letter writer. Populate the LaTeX template below \
+with the candidate's real information drawn from the provided knowledge-base \
+documents. Preserve the LaTeX document structure and commands exactly — only \
+replace placeholder text. Return ONLY the complete LaTeX document, no markdown \
+fences, no commentary.
+{locked_sections_notice}"""
+
+PROMPT_GENERATE_REVISE = """\
+You are an expert CV/cover-letter editor. Revise the LaTeX document according \
+to the user instructions, inline comments, fit analysis, and quality analysis \
+provided. Use the knowledge-base documents as the authoritative source of \
+candidate information. Preserve the LaTeX document structure. Return ONLY the \
+complete revised LaTeX document, no markdown fences, no commentary.
+{locked_sections_notice}"""
+
+PROMPT_ANALYZE_FIT = """\
+You are a hiring-fit analyst. Read the candidate document and the job \
+description. List 3-5 specific, actionable improvements to better match \
+the document to the job requirements. Be concise. Plain text only — no LaTeX."""
+
+PROMPT_ANALYZE_QUALITY = """\
+You are a document-quality reviewer. Check the document for:
+1. AI-sounding phrases ("leverage", "synergy", "utilize", overuse of "passionate", etc.)
+2. Vague or unquantified claims
+3. Grammatical or spelling issues
+4. Formatting inconsistencies visible in the LaTeX source
+List issues concisely. Plain text only — no LaTeX."""
+
+PROMPT_APPLY_SUGGESTIONS = """\
+You are a LaTeX document editor. Apply the feedback below to improve the \
+document. {locked_sections_notice}
+Return ONLY the complete revised LaTeX document, no markdown fences."""
+
+PROMPT_REDUCE_SIZE = """\
+The document is {page_count} page(s) but must fit on exactly 1 page. \
+Reduce content to fit: tighten wording, shorten bullet points, remove less \
+important items. Do NOT remove entire sections unless unavoidable. \
+{locked_sections_notice}
+Return ONLY the complete revised LaTeX document, no markdown fences."""
+
+
+def _get_prompt(key: str, default: str) -> str:
+    """Load a prompt template from DB settings, falling back to default."""
+    from jam.db import get_all_settings
+    stored = get_all_settings()
+    return stored.get(key) or default
 
 
 def _extract_inline_comments(latex: str) -> list[str]:
@@ -181,8 +241,19 @@ def _strip_latex_fences(text: str) -> str:
     return text.strip()
 
 
-async def _compile_latex_bytes(latex_source: str) -> bytes:
-    """Run tectonic and return PDF bytes. Raises CompileError on failure."""
+async def _compile_latex_bytes(
+    latex_source: str,
+    images: dict[str, str] | None = None,
+) -> bytes:
+    """Run tectonic and return PDF bytes. Raises CompileError on failure.
+
+    Args:
+        latex_source: LaTeX document source.
+        images: Optional mapping of filename base (e.g. ``"photo"``) to
+            base64 data URIs.  Each URI is decoded and written as
+            ``<base>.{ext}`` in the temp directory before compilation so
+            that ``\\includegraphics`` can find them.
+    """
     if not shutil.which("tectonic"):
         raise CompileError("tectonic not found in PATH")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -190,6 +261,20 @@ async def _compile_latex_bytes(latex_source: str) -> bytes:
         pdf_path = os.path.join(tmpdir, "document.pdf")
         with open(tex_path, "w", encoding="utf-8") as fh:
             fh.write(latex_source)
+        if images:
+            import base64 as _b64
+            for filename_base, data_uri in images.items():
+                if not data_uri.startswith("data:"):
+                    continue
+                try:
+                    header, b64 = data_uri.split(",", 1)
+                    mime = header.split(":")[1].split(";")[0]
+                    ext = mime.split("/")[1]
+                    img_bytes = _b64.b64decode(b64)
+                    with open(os.path.join(tmpdir, f"{filename_base}.{ext}"), "wb") as fh:
+                        fh.write(img_bytes)
+                except Exception:
+                    pass
         proc = await asyncio.create_subprocess_exec(
             "tectonic",
             tex_path,
@@ -265,7 +350,8 @@ async def retrieve_kb_docs(state: DocumentGenerationState) -> dict:
             namespace_ids=search_ns or None,
             settings=settings,
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("KB semantic search failed: %s", exc)
         search_results = []
 
     # Trim results back to requested count after over-fetch
@@ -278,19 +364,21 @@ async def retrieve_kb_docs(state: DocumentGenerationState) -> dict:
             include_docs = await list_namespace_documents(
                 include_ns, settings=settings
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("KB include namespace fetch failed for %s: %s", include_ns, exc)
             include_docs = []
 
     # Merge: include-namespace docs first, then search results (deduplicated)
+    # Search API chunks use "doc_id"; list API documents use "id".
     seen_ids: set[str] = set()
     merged: list[dict] = []
     for doc in include_docs:
-        doc_id = doc.get("id", "")
+        doc_id = doc.get("doc_id") or doc.get("id", "")
         if doc_id and doc_id not in seen_ids:
             seen_ids.add(doc_id)
-            merged.append(doc)
+        merged.append(doc)
     for doc in search_results:
-        doc_id = doc.get("id", "")
+        doc_id = doc.get("doc_id") or doc.get("id", "")
         if not doc_id or doc_id not in seen_ids:
             if doc_id:
                 seen_ids.add(doc_id)
@@ -303,6 +391,8 @@ async def retrieve_kb_docs(state: DocumentGenerationState) -> dict:
         "kb_docs": merged,
         "inline_comments": _extract_inline_comments(state["latex_template"]),
         "locked_sections": _locked_sections(state["instructions_json"]),
+        "personal_photo": stored.get("personal_photo", ""),
+        "personal_signature": stored.get("personal_signature", ""),
         "progress_events": [
             {
                 "node": "retrieve_kb_docs",
@@ -325,14 +415,43 @@ async def generate_or_revise(state: DocumentGenerationState) -> dict:
     )
     kb_context = "\n\n".join(_extract_kb_doc_content(d) for d in state["kb_docs"])[:6000]
 
+    # Build image availability hints for the LLM
+    photo_available = bool(state.get("personal_photo"))
+    signature_available = bool(state.get("personal_signature"))
+    image_hints = []
+    if photo_available:
+        photo_uri = state["personal_photo"]
+        photo_ext = "png"
+        if photo_uri.startswith("data:"):
+            try:
+                photo_ext = photo_uri.split(":")[1].split(";")[0].split("/")[1]
+            except Exception:
+                pass
+        image_hints.append(
+            f"A profile photo of the candidate is available as 'photo.{photo_ext}'."
+            f" You may include it using \\includegraphics{{photo.{photo_ext}}}."
+        )
+    if signature_available:
+        sig_uri = state["personal_signature"]
+        sig_ext = "png"
+        if sig_uri.startswith("data:"):
+            try:
+                sig_ext = sig_uri.split(":")[1].split(";")[0].split("/")[1]
+            except Exception:
+                pass
+        image_hints.append(
+            f"A signature image is available as 'signature.{sig_ext}'."
+            f" You may include it using \\includegraphics{{signature.{sig_ext}}}."
+        )
+    image_info = "\n".join(image_hints) if image_hints else ""
+
     if state["is_first_generation"]:
-        system = f"""\
-You are an expert CV/cover-letter writer. Populate the LaTeX template below \
-with the candidate's real information drawn from the provided knowledge-base \
-documents. Preserve the LaTeX document structure and commands exactly — only \
-replace placeholder text. Return ONLY the complete LaTeX document, no markdown \
-fences, no commentary.
-{locked_str}"""
+        template = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST)
+        system = template.format_map(
+            defaultdict(str, locked_sections_notice=locked_str)
+        )
+        if image_info:
+            system += f"\n{image_info}"
         user = f"""\
 === JOB DESCRIPTION ===
 {state["job_description"]}
@@ -346,15 +465,18 @@ fences, no commentary.
         comments = state["inline_comments"]
         comments_str = "\n".join(f"- {c}" for c in comments) if comments else "None"
         instructions = _format_instructions(state["instructions_json"])
-        system = f"""\
-You are an expert CV/cover-letter editor. Revise the LaTeX document according \
-to the user instructions, inline comments, fit analysis, and quality analysis \
-provided. Preserve the LaTeX document structure. Return ONLY the complete \
-revised LaTeX document, no markdown fences, no commentary.
-{locked_str}"""
+        template = _get_prompt("prompt_generate_revise", PROMPT_GENERATE_REVISE)
+        system = template.format_map(
+            defaultdict(str, locked_sections_notice=locked_str)
+        )
+        if image_info:
+            system += f"\n{image_info}"
         user = f"""\
 === JOB DESCRIPTION ===
 {state["job_description"]}
+
+=== KNOWLEDGE BASE DOCUMENTS ===
+{kb_context if kb_context else "(none available)"}
 
 === USER INSTRUCTIONS ===
 {instructions if instructions else "(none)"}
@@ -397,10 +519,7 @@ revised LaTeX document, no markdown fences, no commentary.
 async def analyze_fit(state: DocumentGenerationState) -> dict:
     from jam.llm import llm_call
 
-    system = """\
-You are a hiring-fit analyst. Read the candidate document and the job \
-description. List 3-5 specific, actionable improvements to better match \
-the document to the job requirements. Be concise. Plain text only — no LaTeX."""
+    system = _get_prompt("prompt_analyze_fit", PROMPT_ANALYZE_FIT)
     user = f"""\
 === JOB DESCRIPTION ===
 {state["job_description"][:3000]}
@@ -410,8 +529,14 @@ the document to the job requirements. Be concise. Plain text only — no LaTeX."
 
     try:
         feedback = await llm_call(system, user, Settings())
-    except Exception:
+    except Exception as exc:
         feedback = ""
+        return {
+            "fit_feedback": feedback,
+            "progress_events": [
+                {"node": "analyze_fit", "status": "error", "detail": str(exc)}
+            ],
+        }
     return {
         "fit_feedback": feedback,
         "progress_events": [{"node": "analyze_fit", "status": "done"}],
@@ -421,13 +546,7 @@ the document to the job requirements. Be concise. Plain text only — no LaTeX."
 async def analyze_quality(state: DocumentGenerationState) -> dict:
     from jam.llm import llm_call
 
-    system = """\
-You are a document-quality reviewer. Check the document for:
-1. AI-sounding phrases ("leverage", "synergy", "utilize", overuse of "passionate", etc.)
-2. Vague or unquantified claims
-3. Grammatical or spelling issues
-4. Formatting inconsistencies visible in the LaTeX source
-List issues concisely. Plain text only — no LaTeX."""
+    system = _get_prompt("prompt_analyze_quality", PROMPT_ANALYZE_QUALITY)
     user = f"=== DOCUMENT ===\n{state['current_latex'][:6000]}"
 
     try:
@@ -449,10 +568,10 @@ async def apply_suggestions(state: DocumentGenerationState) -> dict:
         if locked
         else "No locked sections."
     )
-    system = f"""\
-You are a LaTeX document editor. Apply the feedback below to improve the \
-document. {locked_str}
-Return ONLY the complete revised LaTeX document, no markdown fences."""
+    template = _get_prompt("prompt_apply_suggestions", PROMPT_APPLY_SUGGESTIONS)
+    system = template.format_map(
+        defaultdict(str, locked_sections_notice=locked_str)
+    )
     user = f"""\
 === FIT FEEDBACK ===
 {state["fit_feedback"] or "(none)"}
@@ -492,8 +611,13 @@ async def compile_and_check(state: DocumentGenerationState) -> dict:
                 {"node": "compile_and_check", "status": "skipped", "detail": "upstream error"}
             ],
         }
+    images: dict[str, str] = {}
+    if state.get("personal_photo"):
+        images["photo"] = state["personal_photo"]
+    if state.get("personal_signature"):
+        images["signature"] = state["personal_signature"]
     try:
-        pdf_bytes = await _compile_latex_bytes(state["current_latex"])
+        pdf_bytes = await _compile_latex_bytes(state["current_latex"], images=images or None)
     except CompileError as exc:
         return {
             "compile_error": str(exc),
@@ -530,12 +654,10 @@ async def reduce_size(state: DocumentGenerationState) -> dict:
         else "No locked sections."
     )
     attempt = state["compile_attempts"] + 1
-    system = f"""\
-The document is {state["page_count"]} page(s) but must fit on exactly 1 page. \
-Reduce content to fit: tighten wording, shorten bullet points, remove less \
-important items. Do NOT remove entire sections unless unavoidable. \
-{locked_str}
-Return ONLY the complete revised LaTeX document, no markdown fences."""
+    template = _get_prompt("prompt_reduce_size", PROMPT_REDUCE_SIZE)
+    system = template.format_map(
+        defaultdict(str, locked_sections_notice=locked_str, page_count=str(state["page_count"]))
+    )
     user = state["current_latex"]
 
     try:
@@ -635,3 +757,25 @@ def build_generation_graph():
 
 # Compiled once at import time, reused across all requests.
 generation_graph = build_generation_graph()
+
+
+def build_critique_graph():
+    """Graph that only critiques the current document without modifying it."""
+    from langgraph.graph import StateGraph, END
+
+    graph = StateGraph(DocumentGenerationState)
+
+    graph.add_node("analyze_fit", analyze_fit)
+    graph.add_node("analyze_quality", analyze_quality)
+    graph.add_node("finalize", finalize)
+
+    graph.set_entry_point("analyze_fit")
+
+    graph.add_edge("analyze_fit", "analyze_quality")
+    graph.add_edge("analyze_quality", "finalize")
+    graph.add_edge("finalize", END)
+
+    return graph.compile()
+
+
+critique_graph = build_critique_graph()

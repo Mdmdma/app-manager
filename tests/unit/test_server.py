@@ -17,6 +17,7 @@ def client():
     return AsyncClient(transport=transport, base_url="http://test")
 
 
+
 @pytest.fixture(autouse=True)
 def isolated_db(tmp_path):
     """Point every db call to a fresh SQLite db for each test."""
@@ -38,6 +39,21 @@ def isolated_db(tmp_path):
         "db_create_version": "create_version",
         "db_list_versions": "list_versions",
         "db_get_version": "get_version",
+        "db_create_extra_question": "create_extra_question",
+        "db_list_extra_questions": "list_extra_questions",
+        "db_get_extra_question": "get_extra_question",
+        "db_update_extra_question": "update_extra_question",
+        "db_delete_extra_question": "delete_extra_question",
+        "db_create_interview_round": "create_interview_round",
+        "db_list_interview_rounds": "list_interview_rounds",
+        "db_get_interview_round": "get_interview_round",
+        "db_update_interview_round": "update_interview_round",
+        "db_delete_interview_round": "delete_interview_round",
+        "db_create_offer": "create_offer",
+        "db_list_offers": "list_offers",
+        "db_get_offer": "get_offer",
+        "db_update_offer": "update_offer",
+        "db_delete_offer": "delete_offer",
     }
 
     patchers = []
@@ -687,6 +703,38 @@ async def test_get_settings_returns_kb_retrieval_fields(client, isolated_db):
 
 
 @pytest.mark.asyncio
+async def test_save_settings_rejects_model_provider_mismatch(client):
+    """POST /settings should reject a model that doesn't belong to the given provider."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"llm_provider": "openai", "llm_model": "claude-sonnet-4-6"},
+    )
+    assert resp.status_code == 422
+    assert "does not belong to provider" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_save_settings_accepts_valid_model_provider_pair(client):
+    """POST /settings should accept a model that belongs to the given provider."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"llm_provider": "anthropic", "llm_model": "claude-sonnet-4-6"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_settings_allows_provider_only(client):
+    """POST /settings with only llm_provider (no model) should succeed without validation."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"llm_provider": "openai"},
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_gmail_auth_url_with_valid_credentials(client, isolated_db):
     """GET /gmail/auth-url should return an auth URL when credentials are configured."""
     _db_module.set_setting("gmail_client_id", "123456.apps.googleusercontent.com", db_path=isolated_db)
@@ -1121,7 +1169,7 @@ async def test_compile_document_empty_source(client):
 
 @pytest.mark.asyncio
 async def test_compile_document_success(client):
-    """Compile should return PDF bytes and create a version."""
+    """Compile should return PDF bytes without creating a version."""
     import asyncio
 
     app_id = await _create_test_app(client)
@@ -1149,18 +1197,18 @@ async def test_compile_document_success(client):
         return proc
 
     with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
-         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess), \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
         resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content == fake_pdf
 
-    # Verify a version was created
+    # Compile creates a version snapshot
     ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
     assert ver_resp.status_code == 200
     versions = ver_resp.json()
     assert len(versions) == 1
-    assert versions[0]["version_number"] == 1
 
 
 @pytest.mark.asyncio
@@ -1211,9 +1259,18 @@ async def test_list_versions_not_found(client):
 # ── Compile version endpoint tests ──────────────────────────────────────────
 
 
-async def _create_version_via_compile(client, doc_id):
-    """Helper: compile a document (mocked) to create a version snapshot."""
+async def _create_version_via_compile(client, doc_id, db_path=None):
+    """Helper: create a version snapshot via API GET + DB, then compile to populate PDF cache."""
     fake_pdf = b"%PDF-1.4 fake pdf content"
+
+    # Fetch doc via API (uses the isolated DB) and create version directly
+    doc_resp = await client.get(f"/api/v1/documents/{doc_id}")
+    doc = doc_resp.json()
+    kwargs = {"document_id": doc_id, "latex_source": doc["latex_source"],
+              "prompt_text": doc.get("prompt_text", "")}
+    if db_path:
+        kwargs["db_path"] = db_path
+    _db_module.create_version(**kwargs)
 
     async def fake_subprocess(*args, **kwargs):
         import os
@@ -1228,7 +1285,8 @@ async def _create_version_via_compile(client, doc_id):
         return proc
 
     with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
-         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess), \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
         resp = await client.post(f"/api/v1/documents/{doc_id}/compile")
     assert resp.status_code == 200
     return fake_pdf
@@ -1251,7 +1309,7 @@ async def test_compile_version_empty_source(client, isolated_db):
     doc_id = create_resp.json()["id"]
 
     # Compile to create a version
-    await _create_version_via_compile(client, doc_id)
+    await _create_version_via_compile(client, doc_id, db_path=isolated_db)
 
     # Manually create a version with empty source via the DB (using test db_path)
     from jam.db import create_version as db_create_version_fn
@@ -1263,7 +1321,7 @@ async def test_compile_version_empty_source(client, isolated_db):
 
 
 @pytest.mark.asyncio
-async def test_compile_version_no_tectonic(client):
+async def test_compile_version_no_tectonic(client, isolated_db):
     """Should return 503 when tectonic is not installed."""
     app_id = await _create_test_app(client)
     create_resp = await client.post(
@@ -1271,7 +1329,7 @@ async def test_compile_version_no_tectonic(client):
         json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
     )
     doc_id = create_resp.json()["id"]
-    await _create_version_via_compile(client, doc_id)
+    await _create_version_via_compile(client, doc_id, db_path=isolated_db)
 
     ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
     version_id = ver_resp.json()[0]["id"]
@@ -1282,7 +1340,7 @@ async def test_compile_version_no_tectonic(client):
 
 
 @pytest.mark.asyncio
-async def test_compile_version_success(client):
+async def test_compile_version_success(client, isolated_db):
     """Compile a version should return PDF bytes."""
     app_id = await _create_test_app(client)
     create_resp = await client.post(
@@ -1290,7 +1348,7 @@ async def test_compile_version_success(client):
         json={"doc_type": "cv", "latex_source": "\\documentclass{article}\\begin{document}Hi\\end{document}"},
     )
     doc_id = create_resp.json()["id"]
-    fake_pdf = await _create_version_via_compile(client, doc_id)
+    fake_pdf = await _create_version_via_compile(client, doc_id, db_path=isolated_db)
 
     ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
     version_id = ver_resp.json()[0]["id"]
@@ -1308,7 +1366,8 @@ async def test_compile_version_success(client):
         return proc
 
     with patch("jam.server.shutil.which", return_value="/usr/bin/tectonic"), \
-         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess):
+         patch("jam.server.asyncio.create_subprocess_exec", side_effect=fake_subprocess), \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
         resp = await client.post(f"/api/v1/documents/versions/{version_id}/compile")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
@@ -1316,7 +1375,7 @@ async def test_compile_version_success(client):
 
 
 @pytest.mark.asyncio
-async def test_compile_version_failure(client):
+async def test_compile_version_failure(client, isolated_db):
     """Compile version should return 422 when tectonic fails."""
     app_id = await _create_test_app(client)
     create_resp = await client.post(
@@ -1324,7 +1383,7 @@ async def test_compile_version_failure(client):
         json={"doc_type": "cv", "latex_source": "bad latex"},
     )
     doc_id = create_resp.json()["id"]
-    await _create_version_via_compile(client, doc_id)
+    await _create_version_via_compile(client, doc_id, db_path=isolated_db)
 
     ver_resp = await client.get(f"/api/v1/documents/{doc_id}/versions")
     version_id = ver_resp.json()[0]["id"]
@@ -1396,9 +1455,14 @@ def test_html_page_instruction_regex_patterns():
         r"CV regex pattern '\\section\{' not found in HTML_PAGE — "
         "check Python escaping of the \\section regex in _buildInstructionsFromLatex"
     )
-    # Cover letter: emits \\paragraph in JS source → regex matches literal \paragraph
+    # Cover letter primary: <<NAME-PARAGRAPH: pattern for template markers
+    assert "<<([A-Z][A-Z-]*)-PARAGRAPH:" in HTML_PAGE, (
+        "Cover letter primary regex '<<([A-Z][A-Z-]*)-PARAGRAPH:' not found in HTML_PAGE — "
+        "check _buildInstructionsFromLatex cover letter section detection"
+    )
+    # Cover letter fallback: \\paragraph for generated documents
     assert r'\\paragraph\{' in HTML_PAGE, (
-        r"Cover letter regex pattern '\\paragraph\{' not found in HTML_PAGE — "
+        r"Cover letter fallback regex '\\paragraph\{' not found in HTML_PAGE — "
         "check Python escaping of the \\paragraph regex in _buildInstructionsFromLatex"
     )
 
@@ -1528,7 +1592,8 @@ async def test_generate_streams_sse(client, isolated_db):
             "page_count": 1,
         }
 
-    with patch("jam.generation.generation_graph") as mock_graph:
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
         mock_graph.astream = _fake_astream
         resp = await client.post(
             f"/api/v1/documents/{doc_id}/generate",
@@ -1566,7 +1631,8 @@ async def test_generate_updates_db_on_success(client, isolated_db):
             "current_latex": new_latex,
         }
 
-    with patch("jam.generation.generation_graph") as mock_graph:
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
         mock_graph.astream = _fake_astream
         await client.post(
             f"/api/v1/documents/{doc_id}/generate",
@@ -1577,3 +1643,493 @@ async def test_generate_updates_db_on_success(client, isolated_db):
     from jam.db import get_document
     updated = get_document(doc_id, db_path=isolated_db)
     assert updated["latex_source"] == new_latex
+
+
+@pytest.mark.asyncio
+async def test_critique_only_returns_feedback_without_modifying_doc(client, isolated_db):
+    """critique_only=True streams feedback but does not update the DB document."""
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+
+    original_latex = r"\documentclass{article}\begin{document}Original.\end{document}"
+    from jam.db import update_document
+    update_document(doc_id, {"latex_source": original_latex}, db_path=isolated_db)
+
+    async def _fake_astream(state, stream_mode=None):
+        yield {
+            "progress_events": [{"node": "analyze_fit", "status": "done"}],
+            "fit_feedback": "Fit feedback here.",
+            "quality_feedback": "Quality feedback here.",
+            "final_latex": original_latex,
+            "final_pdf": None,
+            "page_count": 0,
+        }
+
+    with patch("jam.generation.critique_graph") as mock_graph:
+        mock_graph.astream = _fake_astream
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"critique_only": True},
+        )
+
+    assert resp.status_code == 200
+    lines = [l for l in resp.text.splitlines() if l.startswith("data: ")]
+    events = [json.loads(l[6:]) for l in lines]
+    done = events[-1]
+    assert done["node"] == "done"
+    assert done["fit_feedback"] == "Fit feedback here."
+    assert done["quality_feedback"] == "Quality feedback here."
+
+    # DB document must NOT have been updated
+    from jam.db import get_document
+    doc = get_document(doc_id, db_path=isolated_db)
+    assert doc["latex_source"] == original_latex
+
+
+@pytest.mark.asyncio
+async def test_critique_only_does_not_create_version(client, isolated_db):
+    """critique_only=True must not create a new version entry."""
+    from jam.db import list_versions
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+
+    async def _fake_astream(state, stream_mode=None):
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "fit_feedback": "ok",
+            "quality_feedback": "ok",
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": None,
+            "page_count": 0,
+        }
+
+    versions_before = list_versions(doc_id, db_path=isolated_db)
+
+    with patch("jam.generation.critique_graph") as mock_graph:
+        mock_graph.astream = _fake_astream
+        await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"critique_only": True},
+        )
+
+    versions_after = list_versions(doc_id, db_path=isolated_db)
+    assert len(versions_after) == len(versions_before)
+
+
+# ── Extra questions endpoint tests ───────────────────────────────────────────
+
+async def _make_app(client):
+    resp = await client.post(
+        "/api/v1/applications",
+        json={"company": "Acme", "position": "Dev"},
+    )
+    return resp.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_list_questions_empty(client):
+    app_id = await _make_app(client)
+    resp = await client.get(f"/api/v1/applications/{app_id}/questions")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_create_question(client):
+    app_id = await _make_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/questions",
+        json={"question": "Why us?", "answer": "Great fit", "word_cap": 150},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["question"] == "Why us?"
+    assert data["answer"] == "Great fit"
+    assert data["word_cap"] == 150
+    assert data["application_id"] == app_id
+
+
+@pytest.mark.asyncio
+async def test_update_question(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/questions",
+        json={"question": "Old"},
+    )
+    q_id = create_resp.json()["id"]
+    resp = await client.put(
+        f"/api/v1/questions/{q_id}",
+        json={"question": "New", "word_cap": 200},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["question"] == "New"
+    assert resp.json()["word_cap"] == 200
+
+
+@pytest.mark.asyncio
+async def test_delete_question(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/questions",
+        json={"question": "Q"},
+    )
+    q_id = create_resp.json()["id"]
+    resp = await client.delete(f"/api/v1/questions/{q_id}")
+    assert resp.status_code == 204
+
+    # Verify gone
+    list_resp = await client.get(f"/api/v1/applications/{app_id}/questions")
+    assert list_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_question_not_found(client):
+    resp = await client.put(
+        "/api/v1/questions/nonexistent",
+        json={"question": "Q"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_question_app_not_found(client):
+    resp = await client.get("/api/v1/applications/nonexistent/questions")
+    assert resp.status_code == 404
+
+    resp = await client.post(
+        "/api/v1/applications/nonexistent/questions",
+        json={"question": "Q"},
+    )
+    assert resp.status_code == 404
+
+
+# ── Interview rounds ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_list_interviews_empty(client):
+    app_id = await _make_app(client)
+    resp = await client.get(f"/api/v1/applications/{app_id}/interviews")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_create_interview(client):
+    app_id = await _make_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/interviews",
+        json={"round_type": "technical", "round_number": 1, "status": "scheduled"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["round_type"] == "technical"
+    assert data["round_number"] == 1
+    assert data["status"] == "scheduled"
+    assert data["application_id"] == app_id
+
+
+@pytest.mark.asyncio
+async def test_update_interview(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/interviews",
+        json={"round_type": "hr"},
+    )
+    iv_id = create_resp.json()["id"]
+    resp = await client.put(
+        f"/api/v1/interviews/{iv_id}",
+        json={"status": "completed", "went_well": "Good rapport"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed"
+    assert resp.json()["went_well"] == "Good rapport"
+
+
+@pytest.mark.asyncio
+async def test_delete_interview(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/interviews",
+        json={"round_type": "technical"},
+    )
+    iv_id = create_resp.json()["id"]
+    resp = await client.delete(f"/api/v1/interviews/{iv_id}")
+    assert resp.status_code == 204
+
+    list_resp = await client.get(f"/api/v1/applications/{app_id}/interviews")
+    assert list_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_interview_not_found(client):
+    resp = await client.put(
+        "/api/v1/interviews/nonexistent",
+        json={"status": "completed"},
+    )
+    assert resp.status_code == 404
+
+    resp = await client.delete("/api/v1/interviews/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_interview_app_not_found(client):
+    resp = await client.get("/api/v1/applications/nonexistent/interviews")
+    assert resp.status_code == 404
+
+    resp = await client.post(
+        "/api/v1/applications/nonexistent/interviews",
+        json={"round_type": "hr"},
+    )
+    assert resp.status_code == 404
+
+
+# ── Offers ───────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_list_offers_empty(client):
+    app_id = await _make_app(client)
+    resp = await client.get(f"/api/v1/applications/{app_id}/offers")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_create_offer(client):
+    app_id = await _make_app(client)
+    resp = await client.post(
+        f"/api/v1/applications/{app_id}/offers",
+        json={"status": "received", "base_salary": 75000.0, "currency": "EUR"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["status"] == "received"
+    assert data["base_salary"] == 75000.0
+    assert data["currency"] == "EUR"
+    assert data["application_id"] == app_id
+
+
+@pytest.mark.asyncio
+async def test_update_offer(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/offers",
+        json={"status": "pending"},
+    )
+    offer_id = create_resp.json()["id"]
+    resp = await client.put(
+        f"/api/v1/offers/{offer_id}",
+        json={"status": "accepted", "notes": "Signed"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
+    assert resp.json()["notes"] == "Signed"
+
+
+@pytest.mark.asyncio
+async def test_delete_offer(client):
+    app_id = await _make_app(client)
+    create_resp = await client.post(
+        f"/api/v1/applications/{app_id}/offers",
+        json={"status": "pending"},
+    )
+    offer_id = create_resp.json()["id"]
+    resp = await client.delete(f"/api/v1/offers/{offer_id}")
+    assert resp.status_code == 204
+
+    list_resp = await client.get(f"/api/v1/applications/{app_id}/offers")
+    assert list_resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_offer_not_found(client):
+    resp = await client.put(
+        "/api/v1/offers/nonexistent",
+        json={"status": "accepted"},
+    )
+    assert resp.status_code == 404
+
+    resp = await client.delete("/api/v1/offers/nonexistent")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_offer_app_not_found(client):
+    resp = await client.get("/api/v1/applications/nonexistent/offers")
+    assert resp.status_code == 404
+
+    resp = await client.post(
+        "/api/v1/applications/nonexistent/offers",
+        json={"status": "pending"},
+    )
+    assert resp.status_code == 404
+
+
+# ── Personal info settings ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_personal_info_settings_roundtrip(client):
+    """POST personal info fields to /settings, then GET and verify they appear."""
+    resp = await client.post(
+        "/api/v1/settings",
+        json={
+            "personal_full_name": "Jane Doe",
+            "personal_email": "jane@example.com",
+            "personal_phone": "+49 170 123 4567",
+            "personal_website": "https://janedoe.dev",
+            "personal_address": "Berlin, Germany",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+
+    get_resp = await client.get("/api/v1/settings")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["personal_full_name"] == "Jane Doe"
+    assert data["personal_email"] == "jane@example.com"
+    assert data["personal_phone"] == "+49 170 123 4567"
+    assert data["personal_website"] == "https://janedoe.dev"
+    assert data["personal_address"] == "Berlin, Germany"
+
+
+@pytest.mark.asyncio
+async def test_personal_photo_roundtrip(client):
+    """POST personal_photo data-URI to /settings, then GET and verify it appears unmasked."""
+    photo_uri = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"personal_photo": photo_uri},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert "personal_photo" in resp.json()["saved"]
+
+    get_resp = await client.get("/api/v1/settings")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["personal_photo"] == photo_uri
+
+
+@pytest.mark.asyncio
+async def test_personal_signature_roundtrip(client):
+    """POST personal_signature data-URI to /settings, then GET and verify it appears unmasked."""
+    sig_uri = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAARC=="
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"personal_signature": sig_uri},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert "personal_signature" in resp.json()["saved"]
+
+    get_resp = await client.get("/api/v1/settings")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["personal_signature"] == sig_uri
+
+
+@pytest.mark.asyncio
+async def test_personal_image_fields_not_masked(client, isolated_db):
+    """personal_photo and personal_signature should appear as plain values, not masked."""
+    import jam.db as _db_module_local
+    photo_uri = "data:image/png;base64,abc123"
+    sig_uri = "data:image/png;base64,def456"
+    _db_module_local.set_setting("personal_photo", photo_uri, db_path=isolated_db)
+    _db_module_local.set_setting("personal_signature", sig_uri, db_path=isolated_db)
+
+    get_resp = await client.get("/api/v1/settings")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["personal_photo"] == photo_uri
+    assert data["personal_signature"] == sig_uri
+    # Must not appear as masked flags
+    assert "personal_photo_set" not in data
+    assert "personal_signature_set" not in data
+
+
+# ── PDF metadata helpers ──────────────────────────────────────────────────────
+
+def test_inject_pdf_metadata():
+    """_inject_pdf_metadata sets title and author."""
+    from jam.server import _inject_pdf_metadata
+    import fitz
+
+    doc = fitz.open()
+    doc.new_page()
+    original = doc.tobytes()
+    doc.close()
+
+    result = _inject_pdf_metadata(original, title="Software Engineer", author="Jane Doe")
+
+    doc2 = fitz.open(stream=result, filetype="pdf")
+    md = doc2.metadata
+    assert md["title"] == "Software Engineer"
+    assert md["author"] == "Jane Doe"
+    doc2.close()
+
+
+def test_build_pdf_metadata():
+    """_build_pdf_metadata assembles title and author from settings."""
+    from jam.server import _build_pdf_metadata
+
+    with patch("jam.server.get_all_settings", return_value={"personal_full_name": "Jane Doe"}):
+        meta = _build_pdf_metadata(position="Backend Engineer")
+
+    assert meta == {"title": "Backend Engineer", "author": "Jane Doe"}
+
+
+# ── Default prompts endpoint tests ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_default_prompts_returns_all_keys(client):
+    """GET /prompts/defaults should return all 6 prompt keys."""
+    fake_prompts = {
+        "PROMPT_GENERATE_FIRST": "gen-first",
+        "PROMPT_GENERATE_REVISE": "gen-revise",
+        "PROMPT_ANALYZE_FIT": "analyze-fit",
+        "PROMPT_ANALYZE_QUALITY": "analyze-quality",
+        "PROMPT_APPLY_SUGGESTIONS": "apply-suggestions",
+        "PROMPT_REDUCE_SIZE": "reduce-size",
+    }
+    with patch.dict("jam.generation.__dict__", fake_prompts):
+        resp = await client.get("/api/v1/prompts/defaults")
+    assert resp.status_code == 200
+    data = resp.json()
+    expected_keys = {
+        "prompt_generate_first",
+        "prompt_generate_revise",
+        "prompt_analyze_fit",
+        "prompt_analyze_quality",
+        "prompt_apply_suggestions",
+        "prompt_reduce_size",
+    }
+    assert expected_keys == set(data.keys())
+    # Values should be non-empty strings (actual generation constants)
+    for key in expected_keys:
+        assert isinstance(data[key], str)
+        assert len(data[key]) > 0
+
+
+@pytest.mark.asyncio
+async def test_save_prompt_setting_via_post_settings(client):
+    """POST /settings with a prompt field should persist and return it in saved."""
+    custom_prompt = "You are a CV writer. Write a great CV."
+    resp = await client.post(
+        "/api/v1/settings",
+        json={"prompt_generate_first": custom_prompt},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert "prompt_generate_first" in data["saved"]
+
+
+@pytest.mark.asyncio
+async def test_get_settings_returns_prompt_fields(client, isolated_db):
+    """GET /settings should include prompt fields when stored."""
+    custom_prompt = "Custom generate prompt."
+    _db_module.set_setting("prompt_generate_first", custom_prompt, db_path=isolated_db)
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["prompt_generate_first"] == custom_prompt

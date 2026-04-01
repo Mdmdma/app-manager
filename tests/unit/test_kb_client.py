@@ -536,3 +536,49 @@ async def test_ingest_text_default_settings(monkeypatch):
     # Verify it used the default URL
     get_call = instance.get.call_args[0][0]
     assert "localhost:8000" in get_call
+
+
+@pytest.mark.asyncio
+async def test_list_namespace_documents_uses_high_top_k():
+    """Verify the search body uses top_k=100 (KB API maximum)."""
+    settings = Settings(kb_api_url="http://kb:8000/api/v1")
+    search_response = {"results": []}
+
+    with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = search_response
+        instance.post.return_value = resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        await list_namespace_documents(["ns-a"], settings=settings)
+
+    body = instance.post.call_args[1]["json"]
+    assert body["top_k"] == 100
+    assert body["namespace_ids"] == ["ns-a"]
+    # Query should be a neutral single space, not biased
+    assert body["query"].strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_list_namespace_documents_empty_namespace_ids():
+    """Empty namespace_ids list should still make the API call (no early return)."""
+    settings = Settings(kb_api_url="http://kb:8000/api/v1")
+    search_response = {"results": []}
+
+    with patch("jam.kb_client.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.raise_for_status = lambda: None
+        resp.json.return_value = search_response
+        instance.post.return_value = resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await list_namespace_documents([], settings=settings)
+
+    assert result == []

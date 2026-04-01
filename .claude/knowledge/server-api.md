@@ -1,7 +1,7 @@
 # server-api Knowledge
 <!-- source: jam/server.py -->
-<!-- hash: f40d665335a6 -->
-<!-- updated: 2026-03-28 -->
+<!-- hash: f50c90eda6eb -->
+<!-- updated: 2026-03-31 -->
 
 ## Public API
 
@@ -22,7 +22,7 @@
 | GET | `/api/v1/documents/{doc_id}` | `DocumentResponse` | Get a single document |
 | PUT | `/api/v1/documents/{doc_id}` | `DocumentResponse` | Update document fields |
 | DELETE | `/api/v1/documents/{doc_id}` | 204 No Content | Delete a document |
-| POST | `/api/v1/documents/{doc_id}/compile` | PDF bytes (`application/pdf`) | Compile LaTeX via tectonic, save version, store in cache |
+| POST | `/api/v1/documents/{doc_id}/compile` | PDF bytes (`application/pdf`) | Compile LaTeX via tectonic, store in cache (no version created) |
 | GET | `/api/v1/documents/{doc_id}/pdf` | PDF bytes (`application/pdf`) | Retrieve the most recently compiled PDF from cache (404 if not yet compiled) |
 | GET | `/api/v1/documents/{doc_id}/versions` | `list[DocumentVersionResponse]` | List version history for document |
 | POST | `/api/v1/documents/versions/{version_id}/compile` | PDF bytes (`application/pdf`) | Re-compile an old version to PDF |
@@ -31,7 +31,16 @@
 | GET | `/api/v1/settings` | JSON | Retrieve current settings (keys masked) |
 | POST | `/api/v1/settings` | JSON `{ok, saved}` | Persist settings to database |
 | GET | `/api/v1/templates/defaults` | JSON `{cv, cover_letter}` | Return built-in default LaTeX templates |
+| GET | `/api/v1/prompts/defaults` | JSON | Return built-in default system prompts (6 keys) |
 | GET | `/api/v1/kb/namespaces` | JSON list | Proxy: list all namespaces from the kb knowledge base |
+| GET | `/api/v1/applications/{app_id}/interviews` | `list[InterviewRoundResponse]` | List all interview rounds for an application |
+| POST | `/api/v1/applications/{app_id}/interviews` | `InterviewRoundResponse` (201) | Create a new interview round |
+| PUT | `/api/v1/interviews/{interview_id}` | `InterviewRoundResponse` | Update an interview round |
+| DELETE | `/api/v1/interviews/{interview_id}` | 204 No Content | Delete an interview round |
+| GET | `/api/v1/applications/{app_id}/offers` | `list[OfferResponse]` | List all offers for an application |
+| POST | `/api/v1/applications/{app_id}/offers` | `OfferResponse` (201) | Create a new offer |
+| PUT | `/api/v1/offers/{offer_id}` | `OfferResponse` | Update an offer |
+| DELETE | `/api/v1/offers/{offer_id}` | 204 No Content | Delete an offer |
 | GET | `/api/v1/gmail/auth-url` | JSON `{url}` | Return Gmail OAuth authorization URL |
 | GET | `/api/v1/gmail/status` | JSON `{connected, email}` | Return Gmail connection status |
 | POST | `/api/v1/gmail/disconnect` | JSON `{ok}` | Clear stored Gmail tokens |
@@ -46,10 +55,10 @@
 ## Key Constants / Schema
 
 ### Module-level constants
-- `DEFAULT_CV_TEMPLATE` — raw LaTeX string: article-class CV scaffold with sections for Experience, Education, Skills
-- `DEFAULT_COVER_LETTER_TEMPLATE` — raw LaTeX string: letter-class cover letter scaffold with opening/body/closing
+- `DEFAULT_CV_TEMPLATE` — raw LaTeX string: article-class CV scaffold with 3-minipage header (headshot via `\includegraphics{photo.png}`, name/role, contact links) + sections for Summary, Experience, Education, Skills; requires `graphicx` package
+- `DEFAULT_COVER_LETTER_TEMPLATE` — raw LaTeX string: letter-class cover letter scaffold with opening/body/closing paragraphs + `\fromsig{\includegraphics[height=1.2cm]{signature.png}}` after closing; requires `graphicx` package
 - `_ENV_MAP` — dict mapping settings key → environment variable name (for keys that set env vars on save)
-- `_PLAIN_KEYS` — set of settings keys returned as-is (not masked): `llm_provider`, `llm_model`, `ollama_base_url`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_user_email`, `kb_retrieval_namespaces`, `kb_retrieval_n_results`, `kb_retrieval_padding`, `kb_include_namespaces`
+- `_PLAIN_KEYS` — set of settings keys returned as-is (not masked): `llm_provider`, `llm_model`, `ollama_base_url`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_user_email`, `kb_retrieval_namespaces`, `kb_retrieval_n_results`, `kb_retrieval_padding`, `kb_include_namespaces`, `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size`
 - `_pdf_cache: dict[str, bytes]` — in-memory cache mapping document IDs to their most recently compiled PDF bytes
 
 ### Helper functions
@@ -57,6 +66,8 @@
 - `_fetch_page_text(url)` — async; fetches URL, dispatches on Content-Type: PDF (via pymupdf/fitz), plain-text, or HTML (strips tags); returns `(text, content_kind)`. Timeout 60s.
 - `_parse_tectonic_error(raw_stderr)` — extracts most useful error line from tectonic output
 - `_compile_latex(latex_source)` — async; compiles LaTeX to PDF bytes via tectonic subprocess; raises HTTPException on failure
+- `_inject_pdf_metadata(pdf_bytes, title, author, subject, keywords)` — opens PDF with pymupdf/fitz, sets metadata fields (title, author, subject, keywords, creator="LaTeX"), returns modified bytes
+- `_build_pdf_metadata(position, company, doc_type)` — reads `personal_full_name` from stored settings, assembles `{title, author, subject, keywords}` dict; title=position, subject="{type_label} for {position} at {company}"
 
 ### Pydantic Models
 - `ApplicationStatus` — str enum: `not_applied_yet`, `applied`, `screening`, `interviewing`, `offered`, `rejected`, `accepted`, `withdrawn`
@@ -66,13 +77,19 @@
 - `Application` — domain model: `id` (UUID), all fields above plus `created_at`, `updated_at`
 - `ImportFromUrlRequest` — `url: str` (min_length=1, max_length=2048)
 - `ImportFromUrlResponse` — `application: Application`, `extraction: dict`, `kb_ingested: bool`
-- `SettingsRequest` — `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`, `llm_provider`, `llm_model`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_client_secret`, `gmail_refresh_token`, `gmail_user_email`, `kb_retrieval_namespaces` (str), `kb_retrieval_n_results` (int), `kb_retrieval_padding` (int), `kb_include_namespaces` (str) — all optional
+- `SettingsRequest` — `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`, `llm_provider`, `llm_model`, `cv_latex_template`, `cover_letter_latex_template`, `gmail_client_id`, `gmail_client_secret`, `gmail_refresh_token`, `gmail_user_email`, `kb_retrieval_namespaces` (str), `kb_retrieval_n_results` (int), `kb_retrieval_padding` (int), `kb_include_namespaces` (str), `personal_full_name`, `personal_email`, `personal_phone`, `personal_website`, `personal_address`, `personal_photo`, `personal_signature`, `prompt_generate_first`, `prompt_generate_revise`, `prompt_analyze_fit`, `prompt_analyze_quality`, `prompt_apply_suggestions`, `prompt_reduce_size` — all optional
 - `DocType` — str enum: `cv`, `cover_letter`
 - `DocumentCreate` — `doc_type: DocType`, `title`, `latex_source`, `prompt_text`
 - `DocumentUpdate` — optional: `title`, `latex_source`, `prompt_text`
 - `DocumentResponse` — `id`, `application_id`, `doc_type`, `title`, `latex_source`, `prompt_text`, `created_at`, `updated_at`
 - `DocumentVersionResponse` — `id`, `document_id`, `version_number`, `latex_source`, `prompt_text`, `compiled_at`
 - `GenerateRequest` — `is_first_generation: bool` (default False)
+- `InterviewRoundCreate` — `round_type`, `round_number`, `scheduled_at`, `completed_at`, `interviewer_names`, `location`, `status`, `prep_notes`, `debrief_notes`, `questions_asked`, `went_well`, `to_improve`, `confidence`, `sort_order`
+- `InterviewRoundUpdate` — all optional: same fields as InterviewRoundCreate
+- `InterviewRoundResponse` — `id`, `application_id`, plus all InterviewRoundCreate fields plus `created_at`, `updated_at`
+- `OfferCreate` — `status`, `base_salary`, `currency`, `bonus`, `equity`, `signing_bonus`, `benefits`, `pto_days`, `remote_policy`, `start_date`, `expiry_date`, `notes`, `sort_order`
+- `OfferUpdate` — all optional: same fields as OfferCreate
+- `OfferResponse` — `id`, `application_id`, plus all OfferCreate fields plus `created_at`, `updated_at`
 
 ### Auto-create documents on application creation
 Both `POST /applications` and `POST /applications/from-url` call `_auto_create_documents(app_id)` after inserting the application row. This creates two documents (CV + Cover Letter) pre-populated with LaTeX templates from stored settings or built-in defaults.
@@ -80,9 +97,10 @@ Both `POST /applications` and `POST /applications/from-url` call `_auto_create_d
 ### Compile endpoint logic
 - Writes LaTeX source to temp `.tex` file
 - Runs `tectonic <file> --untrusted` as async subprocess
+- **Injects PDF metadata** via `_inject_pdf_metadata` (title=position, author=personal_full_name, subject, keywords, creator="LaTeX") — applied in all three compile paths (document, version, generate)
 - Returns PDF bytes with `Content-Type: application/pdf`
 - **Stores PDF bytes in `_pdf_cache[doc_id]`** for retrieval via GET endpoint
-- Auto-saves a version snapshot (`db_create_version`) on successful compile
+- **Does NOT create a version** — versions are only created by the generate endpoint
 - Returns 503 if tectonic not installed, 422 if compilation fails
 
 ### PDF cache endpoint logic
@@ -97,6 +115,9 @@ Both `POST /applications` and `POST /applications/from-url` call `_auto_create_d
 - Final event has `node: "done"` with `latex`, `page_count`, `fit_feedback`, `quality_feedback`, `error`
 - Persists final LaTeX to DB and stores PDF in cache on success
 
+### Prompt defaults endpoint
+- `GET /prompts/defaults` lazily imports 6 prompt constants from `jam.generation` and returns them keyed by settings name (e.g. `prompt_generate_first`)
+
 ### KB namespaces proxy
 - `GET /kb/namespaces` proxies `{kb_api_url}/namespaces` — returns the JSON list on success, empty list `[]` on any error
 
@@ -104,6 +125,8 @@ Both `POST /applications` and `POST /applications/from-url` call `_auto_create_d
 - Application CRUD: `db_create_application`, `db_get_application`, `db_list_applications`, `db_update_application`, `db_delete_application`
 - Document CRUD: `db_create_document`, `db_get_document`, `db_list_documents`, `db_update_document`, `db_delete_document`
 - Version CRUD: `db_create_version`, `db_list_versions`, `db_get_version`
+- Interview round CRUD: `db_create_interview_round`, `db_list_interview_rounds`, `db_get_interview_round`, `db_update_interview_round`, `db_delete_interview_round`
+- Offer CRUD: `db_create_offer`, `db_list_offers`, `db_get_offer`, `db_update_offer`, `db_delete_offer`
 
 ### Field behaviour notes
 - `import_from_url`: `location` and `salary_range` extracted by LLM are stored in their dedicated columns; they are NOT concatenated into `notes`. Only `requirements` and `description` go into `notes`.
@@ -116,7 +139,7 @@ Both `POST /applications` and `POST /applications/from-url` call `_auto_create_d
 ## Testing
 - Unit files: `tests/unit/test_server.py`, `tests/unit/test_fetch_page_text.py`
 - Integration file: `tests/integration/test_server_integration.py`
-- Mock targets (patch at `jam.server.*`): `get_catalog`, `get_all_settings`, `set_setting`, `set_settings_batch`, `_fetch_page_text`, `extract_job_info`, `ingest_url`, `ingest_text`, `db_create_application`, `db_get_application`, `db_list_applications`, `db_update_application`, `db_delete_application`, `db_create_document`, `db_get_document`, `db_list_documents`, `db_update_document`, `db_delete_document`, `db_create_version`, `db_list_versions`, `db_get_version`, `shutil.which`, `asyncio.create_subprocess_exec`, `httpx.AsyncClient`
+- Mock targets (patch at `jam.server.*`): `get_catalog`, `get_all_settings`, `set_setting`, `set_settings_batch`, `_fetch_page_text`, `extract_job_info`, `ingest_url`, `ingest_text`, `db_create_application`, `db_get_application`, `db_list_applications`, `db_update_application`, `db_delete_application`, `db_create_document`, `db_get_document`, `db_list_documents`, `db_update_document`, `db_delete_document`, `db_create_version`, `db_list_versions`, `db_get_version`, `db_create_interview_round`, `db_list_interview_rounds`, `db_get_interview_round`, `db_update_interview_round`, `db_delete_interview_round`, `db_create_offer`, `db_list_offers`, `db_get_offer`, `db_update_offer`, `db_delete_offer`, `shutil.which`, `asyncio.create_subprocess_exec`, `httpx.AsyncClient`
 - Uses `httpx.ASGITransport` for async test client
 - `isolated_db` autouse fixture creates a per-test SQLite db and patches all `db_*`, `get_all_settings`, `set_setting`, `set_settings_batch`, and `get_catalog` functions in `jam.server` to use it; yields `db_path` for tests that need to seed data
 

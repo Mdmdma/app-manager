@@ -1,7 +1,7 @@
 # config Knowledge
 <!-- source: jam/config.py -->
-<!-- hash: 171c931bd572 -->
-<!-- updated: 2026-03-28 -->
+<!-- hash: 10742ccf877e -->
+<!-- updated: 2026-03-31 -->
 
 ## Public API
 
@@ -31,6 +31,13 @@
 | `kb_retrieval_n_results` | `int` | `JAM_KB_RETRIEVAL_N_RESULTS` | `5` |
 | `kb_retrieval_padding` | `int` | `JAM_KB_RETRIEVAL_PADDING` | `0` |
 | `kb_include_namespaces` | `str` | `JAM_KB_INCLUDE_NAMESPACES` | `""` |
+| `personal_full_name` | `str` | `JAM_PERSONAL_FULL_NAME` | `""` |
+| `personal_email` | `str` | `JAM_PERSONAL_EMAIL` | `""` |
+| `personal_phone` | `str` | `JAM_PERSONAL_PHONE` | `""` |
+| `personal_website` | `str` | `JAM_PERSONAL_WEBSITE` | `""` |
+| `personal_address` | `str` | `JAM_PERSONAL_ADDRESS` | `""` |
+| `personal_photo` | `str` | `JAM_PERSONAL_PHOTO` | `""` |
+| `personal_signature` | `str` | `JAM_PERSONAL_SIGNATURE` | `""` |
 
 ## Dependencies
 - Imports from: `dataclasses`, `os`
@@ -47,3 +54,5 @@
   - DB values take precedence over env var defaults
   - Fallback order: DB → env var → hardcoded default
 - `kb_retrieval_padding`: Over-fetches `n_results + padding` from KB search, then trims back to `n_results` for RAG quality tuning
+- **Personal info fields**: Used for PDF metadata injection (author, etc.). Stored in DB via settings; env vars serve as fallback defaults.
+- **System prompts** are NOT in config — they are DB-only settings read in `jam/generation.py` via `_get_prompt()`. Too long for env vars.

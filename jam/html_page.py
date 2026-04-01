@@ -302,6 +302,16 @@ HTML_PAGE = """<!DOCTYPE html>
     background: #6d28d9;
   }
 
+  .btn-critique {
+    background: transparent;
+    color: #7c3aed;
+    border: 1.5px solid #7c3aed;
+  }
+
+  .btn-critique:hover {
+    background: #f5f3ff;
+  }
+
   .btn:disabled {
     opacity: 0.55;
     cursor: default;
@@ -355,6 +365,14 @@ HTML_PAGE = """<!DOCTYPE html>
     background: #d1d5db;
     color: #ffffff;
   }
+
+  .badge-scheduled { background: #dbeafe; color: #2563eb; }
+  .badge-completed { background: #dcfce7; color: #16a34a; }
+  .badge-cancelled { background: #f1f5f9; color: #64748b; }
+  .badge-pending { background: #fef3c7; color: #d97706; }
+  .badge-negotiating { background: #dbeafe; color: #2563eb; }
+  .badge-declined { background: #fee2e2; color: #dc2626; }
+  .badge-expired { background: #f1f5f9; color: #64748b; }
 
   /* -- Applications grid -- */
   .applications-grid {
@@ -446,6 +464,132 @@ HTML_PAGE = """<!DOCTYPE html>
 
   .modal-overlay.open {
     display: flex;
+  }
+
+  /* ── Crop modal ─────────────────────────────────────────────────────────── */
+  .crop-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+  }
+  .crop-modal-overlay.open {
+    display: flex;
+  }
+  .crop-modal {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 580px;
+    width: 95%;
+    box-shadow: 0 20px 25px rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .crop-modal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #1a1a2e;
+    margin: 0;
+  }
+  .crop-container {
+    position: relative;
+    overflow: hidden;
+    background: #1a1a2e;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+  }
+  .crop-container img {
+    display: block;
+    max-width: 100%;
+    max-height: 460px;
+    pointer-events: none;
+    user-select: none;
+  }
+  .crop-overlay-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+  .crop-modal-hint {
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin: 0;
+  }
+  .crop-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  /* ── Rectangle crop modal ───────────────────────────────────────────────── */
+  .rect-crop-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+  }
+  .rect-crop-modal-overlay.open {
+    display: flex;
+  }
+  .rect-crop-modal {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 680px;
+    width: 95%;
+    box-shadow: 0 20px 25px rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .rect-crop-modal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #1a1a2e;
+    margin: 0;
+  }
+  .rect-crop-container {
+    position: relative;
+    overflow: hidden;
+    background: #1a1a2e;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+  }
+  .rect-crop-container img {
+    display: block;
+    max-width: 100%;
+    max-height: 400px;
+    pointer-events: none;
+    user-select: none;
+  }
+  .rect-crop-overlay-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none;
+  }
+  .rect-crop-modal-hint {
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin: 0;
+  }
+  .rect-crop-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .modal {
@@ -1022,6 +1166,116 @@ HTML_PAGE = """<!DOCTYPE html>
   .instruction-textarea:focus { border-color: #a5b4fc; }
   .instruction-field.global .instruction-textarea { min-height: 64px; }
 
+  /* ── Extra questions ── */
+  .eq-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .eq-header h2 { margin: 0; }
+  #eq-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .eq-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .eq-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+    background: #f9fafb;
+    border-bottom: 1px solid transparent;
+  }
+  .eq-card.expanded .eq-card-header {
+    border-bottom-color: #e5e7eb;
+  }
+  .eq-chevron {
+    font-size: 0.7rem;
+    color: #6b7280;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+  .eq-card.expanded .eq-chevron {
+    transform: rotate(90deg);
+  }
+  .eq-question-preview {
+    flex: 1;
+    font-size: 0.88rem;
+    font-weight: 500;
+    color: #1a1a2e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .eq-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .eq-word-cap-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  .eq-word-cap-wrap input {
+    width: 56px;
+    padding: 2px 6px;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    text-align: center;
+  }
+  .eq-btn-delete {
+    background: none;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .eq-btn-delete:hover { color: #dc2626; background: #fef2f2; }
+  .eq-card-body {
+    padding: 12px;
+    display: none;
+  }
+  .eq-card.expanded .eq-card-body {
+    display: block;
+  }
+  .eq-card-body .form-group { margin-bottom: 10px; }
+  .eq-card-body .form-group:last-child { margin-bottom: 0; }
+  .eq-card-body textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 60px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background: #fff;
+    outline: none;
+    overflow: hidden;
+    resize: none;
+    transition: border-color 0.15s;
+  }
+  .eq-card-body textarea:focus { border-color: #a5b4fc; }
+
   /* ── Document editor specific ── */
   .doc-list-bar {
     display: flex;
@@ -1262,7 +1516,12 @@ HTML_PAGE = """<!DOCTYPE html>
       <div class="settings-sidebar">
         <ul class="settings-sidebar-menu">
           <li>
-            <button class="sidebar-menu-btn active" data-section="general" onclick="switchSettingsSection('general')">
+            <button class="sidebar-menu-btn active" data-section="personal-info" onclick="switchSettingsSection('personal-info')">
+              Personal Info
+            </button>
+          </li>
+          <li>
+            <button class="sidebar-menu-btn" data-section="general" onclick="switchSettingsSection('general')">
               General
             </button>
           </li>
@@ -1287,6 +1546,11 @@ HTML_PAGE = """<!DOCTYPE html>
             </button>
           </li>
           <li>
+            <button class="sidebar-menu-btn" data-section="prompts" onclick="switchSettingsSection('prompts')">
+              System Prompts
+            </button>
+          </li>
+          <li>
             <button class="sidebar-menu-btn" data-section="gmail" onclick="switchSettingsSection('gmail')">
               Email / Gmail
             </button>
@@ -1295,8 +1559,60 @@ HTML_PAGE = """<!DOCTYPE html>
       </div>
 
       <div class="settings-content">
+        <!-- Personal Info Settings Section -->
+        <div id="section-personal-info" class="settings-section active">
+          <h2>Personal Information</h2>
+          <p class="setting-description" style="color: var(--text-secondary, #6b7280); margin-bottom: 20px;">
+            This information is embedded into your PDF document metadata.
+          </p>
+          <div class="setting-group">
+            <label class="setting-group-label" for="personal-full-name">Full Name</label>
+            <input type="text" id="personal-full-name" class="field-input" placeholder="e.g. Jane Doe" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label" for="personal-email">Email</label>
+            <input type="email" id="personal-email" class="field-input" placeholder="e.g. jane@example.com" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label" for="personal-phone">Phone</label>
+            <input type="tel" id="personal-phone" class="field-input" placeholder="e.g. +1 555 123 4567" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label" for="personal-website">Website / Portfolio</label>
+            <input type="url" id="personal-website" class="field-input" placeholder="e.g. https://janedoe.dev" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label" for="personal-address">Address / Location</label>
+            <input type="text" id="personal-address" class="field-input" placeholder="e.g. San Francisco, CA" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label">Profile Photo</label>
+            <p style="color: var(--text-secondary, #6b7280); font-size: 0.85rem; margin: 0 0 8px 0;">Used on your CV</p>
+            <input type="file" id="personal-photo-input" accept="image/*" style="display:none" onchange="handleImageUpload(this, 'personal-photo-preview', 'personal_photo')" />
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('personal-photo-input').click()">Choose file</button>
+              <button type="button" class="btn btn-secondary" id="personal-photo-remove" style="display:none" onclick="removeImage('personal-photo-preview', 'personal_photo')">Remove</button>
+            </div>
+            <img id="personal-photo-preview" style="display:none; margin-top: 10px; width: 120px; height: 120px; border-radius: 50%; border: 2px solid var(--border-primary, #e5e7eb); object-fit: cover;" alt="Profile photo preview" />
+          </div>
+          <div class="setting-group">
+            <label class="setting-group-label">Signature</label>
+            <p style="color: var(--text-secondary, #6b7280); font-size: 0.85rem; margin: 0 0 8px 0;">Used on your cover letter</p>
+            <input type="file" id="personal-signature-input" accept="image/*" style="display:none" onchange="handleImageUpload(this, 'personal-signature-preview', 'personal_signature')" />
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <button type="button" class="btn btn-secondary" onclick="document.getElementById('personal-signature-input').click()">Choose file</button>
+              <button type="button" class="btn btn-secondary" id="personal-signature-remove" style="display:none" onclick="removeImage('personal-signature-preview', 'personal_signature')">Remove</button>
+            </div>
+            <img id="personal-signature-preview" style="display:none; margin-top: 10px; max-width: 250px; max-height: 80px; border-radius: 4px; border: 1px solid var(--border-primary, #e5e7eb);" alt="Signature preview" />
+          </div>
+          <div style="margin-top: 20px;">
+            <button class="btn btn-primary" onclick="savePersonalInfo()">Save</button>
+            <span id="personal-info-msg" class="status-msg" style="margin-left: 12px;"></span>
+          </div>
+        </div>
+
         <!-- General Settings Section -->
-        <div id="section-general" class="settings-section active">
+        <div id="section-general" class="settings-section">
           <h2>General</h2>
           <div class="setting-group">
             <label class="setting-group-label">Application Title</label>
@@ -1383,7 +1699,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
           <div class="setting-group">
             <label class="setting-group-label">LLM Model</label>
-            <select id="ai-model" class="field-input"></select>
+            <select id="ai-model" class="field-input" onchange="_autoSaveProviderModel()"></select>
           </div>
 
           <div id="ai-credentials"></div>
@@ -1409,6 +1725,73 @@ HTML_PAGE = """<!DOCTYPE html>
 
           <div id="template-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
           <button class="btn btn-primary" style="margin-top:16px;" onclick="saveTemplateSettings()">Save Templates</button>
+        </div>
+
+        <!-- System Prompts Settings Section -->
+        <div id="section-prompts" class="settings-section">
+          <h2>System Prompts</h2>
+          <p style="color:#6b7280; margin-bottom:16px;">
+            Customize the system prompts used by the AI agents during document generation.
+            Available placeholders: <code>{locked_sections_notice}</code> (auto-inserted lock info),
+            <code>{page_count}</code> (current page count, reduce_size only).
+          </p>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Generate (First)</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_generate_first')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Used when populating a template for the first time.</p>
+            <textarea id="prompt-generate-first" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Generate (Revise)</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_generate_revise')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Used when revising an existing document based on user feedback.</p>
+            <textarea id="prompt-generate-revise" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Analyze Fit</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_analyze_fit')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Assesses how well the document matches the job requirements.</p>
+            <textarea id="prompt-analyze-fit" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Analyze Quality</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_analyze_quality')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Reviews document for AI-sounding language, vague claims, grammar issues.</p>
+            <textarea id="prompt-analyze-quality" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Apply Suggestions</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_apply_suggestions')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Applies fit and quality feedback to improve the document.</p>
+            <textarea id="prompt-apply-suggestions" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div class="setting-group">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="setting-group-label" style="margin-bottom:0;">Reduce Size</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_reduce_size')">Reset to default</button>
+            </div>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Shortens document to fit on one page when too long after compilation.</p>
+            <textarea id="prompt-reduce-size" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+          </div>
+
+          <div id="prompt-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
+          <button class="btn btn-primary" style="margin-top:16px;" onclick="savePromptSettings()">Save Prompts</button>
         </div>
 
         <!-- Email / Gmail Settings Section -->
@@ -1466,9 +1849,7 @@ HTML_PAGE = """<!DOCTYPE html>
           <li><button class="detail-step-btn active" data-step="app-details" onclick="switchDetailStep('app-details')">Application Details</button></li>
           <li><button class="detail-step-btn" data-step="cv-cover" onclick="switchDetailStep('cv-cover')">CV &amp; Cover Letters</button></li>
           <li><button class="detail-step-btn" data-step="extra-questions" onclick="switchDetailStep('extra-questions')">Extra Questions</button></li>
-          <li><button class="detail-step-btn" data-step="interview-1" onclick="switchDetailStep('interview-1')">Interview Round 1</button></li>
-          <li><button class="detail-step-btn" data-step="interview-2" onclick="switchDetailStep('interview-2')">Interview Round 2</button></li>
-          <li><button class="detail-step-btn" data-step="interview-3" onclick="switchDetailStep('interview-3')">Interview Round 3</button></li>
+          <li><button class="detail-step-btn" data-step="interviews" onclick="switchDetailStep('interviews')">Interviews</button></li>
           <li><button class="detail-step-btn" data-step="offers" onclick="switchDetailStep('offers')">Offers</button></li>
         </ul>
       </div>
@@ -1574,8 +1955,10 @@ HTML_PAGE = """<!DOCTYPE html>
               <button class="btn btn-sm btn-green" onclick="_saveCurrentDoc('cv')">Save</button>
               <button class="btn btn-sm btn-primary" onclick="_compileDoc('cv')">Compile</button>
               <button class="btn btn-sm btn-generate" onclick="_generateDoc('cv')">Generate</button>
+              <button class="btn btn-sm btn-critique" onclick="_critiqueDoc('cv')">Critique</button>
               <button class="btn btn-sm" id="cv-download-btn" onclick="_downloadPdf('cv')" style="display:none">Download PDF</button>
               <button class="btn btn-sm btn-danger" onclick="_deleteCurrentDoc('cv')">Delete</button>
+              <button class="btn btn-sm" onclick="_renameCurrentDoc('cv')">Rename</button>
               <span id="cv-save-status" class="doc-compile-status"></span>
               <span id="cv-gen-status" class="doc-compile-status"></span>
             </div>
@@ -1618,8 +2001,10 @@ HTML_PAGE = """<!DOCTYPE html>
               <button class="btn btn-sm btn-green" onclick="_saveCurrentDoc('cover_letter')">Save</button>
               <button class="btn btn-sm btn-primary" onclick="_compileDoc('cover_letter')">Compile</button>
               <button class="btn btn-sm btn-generate" onclick="_generateDoc('cover_letter')">Generate</button>
+              <button class="btn btn-sm btn-critique" onclick="_critiqueDoc('cover_letter')">Critique</button>
               <button class="btn btn-sm" id="cover_letter-download-btn" onclick="_downloadPdf('cover_letter')" style="display:none">Download PDF</button>
               <button class="btn btn-sm btn-danger" onclick="_deleteCurrentDoc('cover_letter')">Delete</button>
+              <button class="btn btn-sm" onclick="_renameCurrentDoc('cover_letter')">Rename</button>
               <span id="cover_letter-save-status" class="doc-compile-status"></span>
               <span id="cover_letter-gen-status" class="doc-compile-status"></span>
             </div>
@@ -1657,32 +2042,32 @@ HTML_PAGE = """<!DOCTYPE html>
 
         <!-- Step: Extra Questions -->
         <div id="step-extra-questions" class="detail-step">
-          <h2>Extra Questions</h2>
-          <p class="placeholder-text">Coming soon</p>
+          <div class="eq-header">
+            <h2>Extra Questions</h2>
+            <button class="btn btn-sm btn-primary" onclick="_eqAdd()">+ Add Question</button>
+          </div>
+          <div id="eq-list"></div>
+          <p id="eq-empty" class="placeholder-text">No questions yet. Click "+ Add Question" to get started.</p>
         </div>
 
-        <!-- Step: Interview Round 1 -->
-        <div id="step-interview-1" class="detail-step">
-          <h2>Interview Round 1</h2>
-          <p class="placeholder-text">Coming soon</p>
-        </div>
-
-        <!-- Step: Interview Round 2 -->
-        <div id="step-interview-2" class="detail-step">
-          <h2>Interview Round 2</h2>
-          <p class="placeholder-text">Coming soon</p>
-        </div>
-
-        <!-- Step: Interview Round 3 -->
-        <div id="step-interview-3" class="detail-step">
-          <h2>Interview Round 3</h2>
-          <p class="placeholder-text">Coming soon</p>
+        <!-- Step: Interviews -->
+        <div id="step-interviews" class="detail-step">
+          <div class="section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <h2 style="margin:0;">Interviews</h2>
+            <button class="btn btn-primary btn-sm" onclick="_ivAdd()">+ Add Round</button>
+          </div>
+          <p id="iv-empty" class="placeholder-text">No interview rounds yet</p>
+          <div id="iv-list"></div>
         </div>
 
         <!-- Step: Offers -->
         <div id="step-offers" class="detail-step">
-          <h2>Offers</h2>
-          <p class="placeholder-text">Coming soon</p>
+          <div class="section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <h2 style="margin:0;">Offers</h2>
+            <button class="btn btn-primary btn-sm" onclick="_ofAdd()">+ Add Offer</button>
+          </div>
+          <p id="of-empty" class="placeholder-text">No offers yet</p>
+          <div id="of-list"></div>
         </div>
       </div>
     </div>
@@ -1762,7 +2147,7 @@ let currentDetailId = null;
 
 // API Helper
 async function apiFetch(method, url, body) {
-  const opts = { method };
+  const opts = { method, cache: "no-store" };
   if (body) {
     opts.body = JSON.stringify(body);
     opts.headers = { "Content-Type": "application/json" };
@@ -1866,6 +2251,9 @@ async function openDetailPage(appId) {
     currentDetailId = appId;
     _docTabLoaded = { cv: false, cover_letter: false };
     _currentDocId = { cv: null, cover_letter: null };
+    _eqLoaded = false;
+    _ivLoaded = false;
+    _ofLoaded = false;
 
     // Update sidebar header
     document.getElementById("detail-company").textContent = app.company;
@@ -1994,6 +2382,12 @@ function switchDetailStep(step) {
       _docTabLoaded.cv = true;
     }
   }
+  if (step === "extra-questions" && currentDetailId && !_eqLoaded) {
+    _eqLoad();
+    _eqLoaded = true;
+  }
+  if (step === "interviews" && currentDetailId && !_ivLoaded) { _ivLoaded = true; _ivLoad(); }
+  if (step === "offers" && currentDetailId && !_ofLoaded) { _ofLoaded = true; _ofLoad(); }
 }
 
 async function saveDetailForm() {
@@ -2051,14 +2445,745 @@ async function deleteFromDetail() {
   }
 }
 
+// ── Personal Info settings ──────────────────────────────────────────────────
+
+function handleImageUpload(input, previewId, settingKey) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const dataUri = e.target.result;
+    if (settingKey === "personal_photo") {
+      // Route through circular crop modal for profile photo
+      openCropModal(dataUri, previewId, settingKey);
+    } else if (settingKey === "personal_signature") {
+      // Route through rectangle crop modal for signature
+      openRectCropModal(dataUri, previewId, settingKey);
+    } else {
+      // Direct preview for other images
+      const preview = document.getElementById(previewId);
+      preview.src = dataUri;
+      preview.style.display = "block";
+      document.getElementById(previewId.replace("preview", "remove")).style.display = "";
+      _stored[settingKey] = dataUri;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Crop modal ───────────────────────────────────────────────────────────────
+
+(function() {
+  // Internal state for the active crop session
+  let _cropImg = null;       // HTMLImageElement displayed in the modal
+  let _cropCanvas = null;    // overlay canvas
+  let _cropCtx = null;
+  let _cropPreviewId = null;
+  let _cropSettingKey = null;
+
+  // Circle state (in image-display coordinates, not natural coordinates)
+  let _circle = { x: 0, y: 0, r: 0 };
+
+  // Interaction state
+  let _drag = null; // null | { type: "move"|"resize", startX, startY, startCircle }
+
+  // Expose public functions on window
+  window.openCropModal = function(dataUri, previewId, settingKey) {
+    _cropPreviewId = previewId;
+    _cropSettingKey = settingKey;
+
+    // Build modal if it doesn't exist yet
+    let overlay = document.getElementById("crop-modal-overlay");
+    if (!overlay) {
+      overlay = _buildCropModal();
+      document.body.appendChild(overlay);
+    }
+
+    const container = document.getElementById("crop-container");
+    // Remove old image and canvas
+    container.innerHTML = "";
+
+    _cropImg = new Image();
+    _cropImg.alt = "Image to crop";
+    _cropImg.style.cssText = "display:block; max-width:100%; max-height:460px; pointer-events:none; user-select:none;";
+
+    _cropImg.onload = function() {
+      // Now that the image is rendered we can set up the canvas
+      const dispW = _cropImg.offsetWidth;
+      const dispH = _cropImg.offsetHeight;
+
+      _cropCanvas = document.createElement("canvas");
+      _cropCanvas.className = "crop-overlay-canvas";
+      _cropCanvas.width = dispW;
+      _cropCanvas.height = dispH;
+      _cropCanvas.style.cssText = "position:absolute; top:0; left:0; pointer-events:none;";
+      container.appendChild(_cropCanvas);
+      _cropCtx = _cropCanvas.getContext("2d");
+
+      // Initial circle: largest possible circle centred in the image
+      const r = Math.floor(Math.min(dispW, dispH) / 2) - 4;
+      _circle = { x: Math.floor(dispW / 2), y: Math.floor(dispH / 2), r: Math.max(25, r) };
+
+      _drawCropOverlay();
+
+      // Sync canvas size if window resizes
+      const ro = new ResizeObserver(() => _onCropResize());
+      ro.observe(container);
+      container._cropRO = ro;
+    };
+
+    _cropImg.src = dataUri;
+    container.appendChild(_cropImg);
+
+    // Pointer events on container
+    container.addEventListener("mousedown", _onCropMouseDown);
+    container.addEventListener("mousemove", _onCropMouseMove);
+    container.addEventListener("mouseup", _onCropMouseUp);
+    container.addEventListener("mouseleave", _onCropMouseUp);
+    container.addEventListener("wheel", _onCropWheel, { passive: false });
+
+    overlay.classList.add("open");
+  };
+
+  window.closeCropModal = function() {
+    const overlay = document.getElementById("crop-modal-overlay");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+
+    // Clean up event listeners and observer
+    const container = document.getElementById("crop-container");
+    if (container) {
+      container.removeEventListener("mousedown", _onCropMouseDown);
+      container.removeEventListener("mousemove", _onCropMouseMove);
+      container.removeEventListener("mouseup", _onCropMouseUp);
+      container.removeEventListener("mouseleave", _onCropMouseUp);
+      container.removeEventListener("wheel", _onCropWheel);
+      if (container._cropRO) {
+        container._cropRO.disconnect();
+        container._cropRO = null;
+      }
+    }
+    _drag = null;
+    // Reset the file input so the same file can be re-selected
+    const inputId = _cropPreviewId ? _cropPreviewId.replace("preview", "input") : null;
+    if (inputId) {
+      const el = document.getElementById(inputId);
+      if (el) el.value = "";
+    }
+  };
+
+  window.applyCrop = function() {
+    if (!_cropImg || !_cropCanvas) return;
+
+    const dispW = _cropCanvas.width;
+    const dispH = _cropCanvas.height;
+    const natW = _cropImg.naturalWidth;
+    const natH = _cropImg.naturalHeight;
+
+    // Scale factors from display coords to natural image coords
+    const scaleX = natW / dispW;
+    const scaleY = natH / dispH;
+
+    const natCx = _circle.x * scaleX;
+    const natCy = _circle.y * scaleY;
+    const natR  = _circle.r * Math.min(scaleX, scaleY);
+
+    const size = Math.ceil(natR * 2);
+    const offscreen = document.createElement("canvas");
+    offscreen.width = size;
+    offscreen.height = size;
+    const ctx = offscreen.getContext("2d");
+
+    // Clip to circle
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    // Draw the relevant region of the natural image
+    ctx.drawImage(
+      _cropImg,
+      natCx - natR, natCy - natR, natR * 2, natR * 2,
+      0, 0, size, size
+    );
+
+    const resultUri = offscreen.toDataURL("image/png");
+
+    // Update preview
+    const preview = document.getElementById(_cropPreviewId);
+    preview.src = resultUri;
+    preview.style.display = "block";
+    document.getElementById(_cropPreviewId.replace("preview", "remove")).style.display = "";
+    _stored[_cropSettingKey] = resultUri;
+
+    closeCropModal();
+  };
+
+  // ── Build DOM ──────────────────────────────────────────────────────────────
+
+  function _buildCropModal() {
+    const overlay = document.createElement("div");
+    overlay.id = "crop-modal-overlay";
+    overlay.className = "crop-modal-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "crop-modal-title");
+
+    overlay.innerHTML = `
+      <div class="crop-modal">
+        <p class="crop-modal-title" id="crop-modal-title">Crop Profile Photo</p>
+        <p class="crop-modal-hint">Drag the circle to reposition. Scroll to resize.</p>
+        <div id="crop-container" class="crop-container" style="cursor:move;"></div>
+        <div class="crop-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeCropModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="applyCrop()">Crop</button>
+        </div>
+      </div>
+    `;
+
+    // Close on overlay click (outside modal)
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) closeCropModal();
+    });
+
+    return overlay;
+  }
+
+  // ── Drawing ────────────────────────────────────────────────────────────────
+
+  function _drawCropOverlay() {
+    if (!_cropCtx || !_cropCanvas) return;
+    const w = _cropCanvas.width;
+    const h = _cropCanvas.height;
+    const { x, y, r } = _circle;
+
+    _cropCtx.clearRect(0, 0, w, h);
+
+    // Dark overlay outside circle using composite ops
+    _cropCtx.save();
+    _cropCtx.fillStyle = "rgba(0,0,0,0.55)";
+    _cropCtx.fillRect(0, 0, w, h);
+    _cropCtx.globalCompositeOperation = "destination-out";
+    _cropCtx.beginPath();
+    _cropCtx.arc(x, y, r, 0, Math.PI * 2);
+    _cropCtx.fill();
+    _cropCtx.restore();
+
+    // Circle border
+    _cropCtx.save();
+    _cropCtx.strokeStyle = "#4f46e5";
+    _cropCtx.lineWidth = 2;
+    _cropCtx.beginPath();
+    _cropCtx.arc(x, y, r, 0, Math.PI * 2);
+    _cropCtx.stroke();
+    _cropCtx.restore();
+
+    // Resize handle — small square at bottom-right of circle
+    const hx = x + r * Math.cos(Math.PI / 4);
+    const hy = y + r * Math.sin(Math.PI / 4);
+    _cropCtx.save();
+    _cropCtx.fillStyle = "#4f46e5";
+    _cropCtx.fillRect(hx - 5, hy - 5, 10, 10);
+    _cropCtx.restore();
+  }
+
+  // ── Resize observer ────────────────────────────────────────────────────────
+
+  function _onCropResize() {
+    if (!_cropImg || !_cropCanvas) return;
+    const newW = _cropImg.offsetWidth;
+    const newH = _cropImg.offsetHeight;
+    if (newW === _cropCanvas.width && newH === _cropCanvas.height) return;
+    // Scale circle proportionally
+    const sx = newW / _cropCanvas.width;
+    const sy = newH / _cropCanvas.height;
+    _circle.x = Math.round(_circle.x * sx);
+    _circle.y = Math.round(_circle.y * sy);
+    _circle.r = Math.round(_circle.r * Math.min(sx, sy));
+    _cropCanvas.width = newW;
+    _cropCanvas.height = newH;
+    _cropCanvas.style.width = newW + "px";
+    _cropCanvas.style.height = newH + "px";
+    _clampCircle();
+    _drawCropOverlay();
+  }
+
+  // ── Pointer helpers ────────────────────────────────────────────────────────
+
+  function _containerXY(e) {
+    const rect = _cropCanvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function _distToHandle(px, py) {
+    const hx = _circle.x + _circle.r * Math.cos(Math.PI / 4);
+    const hy = _circle.y + _circle.r * Math.sin(Math.PI / 4);
+    return Math.sqrt((px - hx) ** 2 + (py - hy) ** 2);
+  }
+
+  function _clampCircle() {
+    const w = _cropCanvas.width;
+    const h = _cropCanvas.height;
+    const minR = 25;
+    _circle.r = Math.max(minR, Math.min(_circle.r, Math.floor(Math.min(w, h) / 2)));
+    _circle.x = Math.max(_circle.r, Math.min(_circle.x, w - _circle.r));
+    _circle.y = Math.max(_circle.r, Math.min(_circle.y, h - _circle.r));
+  }
+
+  function _onCropMouseDown(e) {
+    if (!_cropCanvas) return;
+    e.preventDefault();
+    const { x, y } = _containerXY(e);
+    if (_distToHandle(x, y) <= 12) {
+      _drag = { type: "resize", startX: x, startY: y, startCircle: { ..._circle } };
+    } else {
+      const dx = x - _circle.x, dy = y - _circle.y;
+      if (Math.sqrt(dx * dx + dy * dy) <= _circle.r) {
+        _drag = { type: "move", startX: x, startY: y, startCircle: { ..._circle } };
+      }
+    }
+  }
+
+  function _onCropMouseMove(e) {
+    if (!_drag || !_cropCanvas) return;
+    e.preventDefault();
+    const { x, y } = _containerXY(e);
+    const dx = x - _drag.startX;
+    const dy = y - _drag.startY;
+
+    if (_drag.type === "move") {
+      _circle.x = _drag.startCircle.x + dx;
+      _circle.y = _drag.startCircle.y + dy;
+    } else {
+      // resize: distance from centre to current pointer
+      const newR = Math.round(Math.sqrt(
+        (x - _drag.startCircle.x) ** 2 + (y - _drag.startCircle.y) ** 2
+      ));
+      _circle.r = newR;
+    }
+    _clampCircle();
+    _drawCropOverlay();
+  }
+
+  function _onCropMouseUp(e) {
+    _drag = null;
+  }
+
+  function _onCropWheel(e) {
+    if (!_cropCanvas) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -8 : 8;
+    _circle.r += delta;
+    _clampCircle();
+    _drawCropOverlay();
+  }
+})();
+
+// ── Rectangle crop modal ─────────────────────────────────────────────────────
+
+(function() {
+  // Internal state for the active rect crop session
+  let _rImg = null;          // HTMLImageElement displayed in the modal
+  let _rCanvas = null;       // overlay canvas
+  let _rCtx = null;
+  let _rPreviewId = null;
+  let _rSettingKey = null;
+
+  // Rectangle state in image-display coordinates: { x, y, w, h }
+  // (x, y) is the top-left corner
+  let _rect = { x: 0, y: 0, w: 0, h: 0 };
+
+  // Interaction state
+  // type: "move" | "resize-n" | "resize-s" | "resize-e" | "resize-w"
+  //       | "resize-nw" | "resize-ne" | "resize-sw" | "resize-se"
+  let _drag = null;
+
+  const HANDLE_SIZE = 8;  // half-size of corner/edge handles
+  const MIN_W = 50;
+  const MIN_H = 20;
+
+  // ── Public API ─────────────────────────────────────────────────────────────
+
+  window.openRectCropModal = function(dataUri, previewId, settingKey) {
+    _rPreviewId = previewId;
+    _rSettingKey = settingKey;
+
+    // Build modal if it doesn't exist yet
+    let overlay = document.getElementById("rect-crop-modal-overlay");
+    if (!overlay) {
+      overlay = _buildRectCropModal();
+      document.body.appendChild(overlay);
+    }
+
+    const container = document.getElementById("rect-crop-container");
+    container.innerHTML = "";
+
+    _rImg = new Image();
+    _rImg.alt = "Signature image to crop";
+    _rImg.style.cssText = "display:block; max-width:100%; max-height:400px; pointer-events:none; user-select:none;";
+
+    _rImg.onload = function() {
+      const dispW = _rImg.offsetWidth;
+      const dispH = _rImg.offsetHeight;
+
+      _rCanvas = document.createElement("canvas");
+      _rCanvas.className = "rect-crop-overlay-canvas";
+      _rCanvas.width = dispW;
+      _rCanvas.height = dispH;
+      _rCanvas.style.cssText = "position:absolute; top:0; left:0; pointer-events:none;";
+      container.appendChild(_rCanvas);
+      _rCtx = _rCanvas.getContext("2d");
+
+      // Initial rectangle: wide signature-like aspect ratio (3:1), centred
+      const initW = Math.max(MIN_W, Math.min(Math.round(dispW * 0.8), dispW));
+      const initH = Math.max(MIN_H, Math.min(Math.round(initW / 3), dispH));
+      _rect = {
+        x: Math.round((dispW - initW) / 2),
+        y: Math.round((dispH - initH) / 2),
+        w: initW,
+        h: initH
+      };
+
+      _drawRectOverlay();
+
+      const ro = new ResizeObserver(() => _onRectResize());
+      ro.observe(container);
+      container._rectRO = ro;
+    };
+
+    _rImg.src = dataUri;
+    container.appendChild(_rImg);
+
+    container.addEventListener("mousedown", _onRectMouseDown);
+    container.addEventListener("mousemove", _onRectMouseMove);
+    container.addEventListener("mouseup", _onRectMouseUp);
+    container.addEventListener("mouseleave", _onRectMouseUp);
+
+    overlay.classList.add("open");
+  };
+
+  window.closeRectCropModal = function() {
+    const overlay = document.getElementById("rect-crop-modal-overlay");
+    if (!overlay) return;
+    overlay.classList.remove("open");
+
+    const container = document.getElementById("rect-crop-container");
+    if (container) {
+      container.removeEventListener("mousedown", _onRectMouseDown);
+      container.removeEventListener("mousemove", _onRectMouseMove);
+      container.removeEventListener("mouseup", _onRectMouseUp);
+      container.removeEventListener("mouseleave", _onRectMouseUp);
+      if (container._rectRO) {
+        container._rectRO.disconnect();
+        container._rectRO = null;
+      }
+    }
+    _drag = null;
+    // Reset file input so the same file can be re-selected
+    const inputId = _rPreviewId ? _rPreviewId.replace("preview", "input") : null;
+    if (inputId) {
+      const el = document.getElementById(inputId);
+      if (el) el.value = "";
+    }
+  };
+
+  window.applyRectCrop = function() {
+    if (!_rImg || !_rCanvas) return;
+
+    const dispW = _rCanvas.width;
+    const dispH = _rCanvas.height;
+    const natW = _rImg.naturalWidth;
+    const natH = _rImg.naturalHeight;
+
+    // Scale factors from display coords to natural image coords
+    const scaleX = natW / dispW;
+    const scaleY = natH / dispH;
+
+    const natX = Math.round(_rect.x * scaleX);
+    const natY = Math.round(_rect.y * scaleY);
+    const natW2 = Math.round(_rect.w * scaleX);
+    const natH2 = Math.round(_rect.h * scaleY);
+
+    const offscreen = document.createElement("canvas");
+    offscreen.width = natW2;
+    offscreen.height = natH2;
+    const ctx = offscreen.getContext("2d");
+
+    ctx.drawImage(_rImg, natX, natY, natW2, natH2, 0, 0, natW2, natH2);
+
+    const resultUri = offscreen.toDataURL("image/png");
+
+    // Update preview and stored value
+    const preview = document.getElementById(_rPreviewId);
+    preview.src = resultUri;
+    preview.style.display = "block";
+    document.getElementById(_rPreviewId.replace("preview", "remove")).style.display = "";
+    _stored[_rSettingKey] = resultUri;
+
+    closeRectCropModal();
+  };
+
+  // ── Build DOM ──────────────────────────────────────────────────────────────
+
+  function _buildRectCropModal() {
+    const overlay = document.createElement("div");
+    overlay.id = "rect-crop-modal-overlay";
+    overlay.className = "rect-crop-modal-overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "rect-crop-modal-title");
+
+    overlay.innerHTML = `
+      <div class="rect-crop-modal">
+        <p class="rect-crop-modal-title" id="rect-crop-modal-title">Crop Signature</p>
+        <p class="rect-crop-modal-hint">Drag to reposition. Drag edges or corners to resize.</p>
+        <div id="rect-crop-container" class="rect-crop-container" style="cursor:move;"></div>
+        <div class="rect-crop-modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeRectCropModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="applyRectCrop()">Crop</button>
+        </div>
+      </div>
+    `;
+
+    overlay.addEventListener("click", function(e) {
+      if (e.target === overlay) closeRectCropModal();
+    });
+
+    return overlay;
+  }
+
+  // ── Drawing ────────────────────────────────────────────────────────────────
+
+  function _drawRectOverlay() {
+    if (!_rCtx || !_rCanvas) return;
+    const w = _rCanvas.width;
+    const h = _rCanvas.height;
+    const { x, y, w: rw, h: rh } = _rect;
+
+    _rCtx.clearRect(0, 0, w, h);
+
+    // Dark overlay outside rectangle
+    _rCtx.save();
+    _rCtx.fillStyle = "rgba(0,0,0,0.55)";
+    _rCtx.fillRect(0, 0, w, h);
+    _rCtx.globalCompositeOperation = "destination-out";
+    _rCtx.fillRect(x, y, rw, rh);
+    _rCtx.restore();
+
+    // Rectangle border
+    _rCtx.save();
+    _rCtx.strokeStyle = "#4f46e5";
+    _rCtx.lineWidth = 2;
+    _rCtx.strokeRect(x, y, rw, rh);
+    _rCtx.restore();
+
+    // Corner and edge handles
+    _rCtx.save();
+    _rCtx.fillStyle = "#4f46e5";
+    const hs = HANDLE_SIZE;
+    const cx = x + rw / 2;
+    const cy = y + rh / 2;
+    // Corners
+    _rCtx.fillRect(x - hs,       y - hs,       hs * 2, hs * 2); // nw
+    _rCtx.fillRect(x + rw - hs,  y - hs,       hs * 2, hs * 2); // ne
+    _rCtx.fillRect(x - hs,       y + rh - hs,  hs * 2, hs * 2); // sw
+    _rCtx.fillRect(x + rw - hs,  y + rh - hs,  hs * 2, hs * 2); // se
+    // Edge midpoints
+    _rCtx.fillRect(cx - hs,      y - hs,       hs * 2, hs * 2); // n
+    _rCtx.fillRect(cx - hs,      y + rh - hs,  hs * 2, hs * 2); // s
+    _rCtx.fillRect(x - hs,       cy - hs,      hs * 2, hs * 2); // w
+    _rCtx.fillRect(x + rw - hs,  cy - hs,      hs * 2, hs * 2); // e
+    _rCtx.restore();
+  }
+
+  // ── Resize observer ────────────────────────────────────────────────────────
+
+  function _onRectResize() {
+    if (!_rImg || !_rCanvas) return;
+    const newW = _rImg.offsetWidth;
+    const newH = _rImg.offsetHeight;
+    if (newW === _rCanvas.width && newH === _rCanvas.height) return;
+    const sx = newW / _rCanvas.width;
+    const sy = newH / _rCanvas.height;
+    _rect.x = Math.round(_rect.x * sx);
+    _rect.y = Math.round(_rect.y * sy);
+    _rect.w = Math.round(_rect.w * sx);
+    _rect.h = Math.round(_rect.h * sy);
+    _rCanvas.width = newW;
+    _rCanvas.height = newH;
+    _clampRect();
+    _drawRectOverlay();
+  }
+
+  // ── Pointer helpers ────────────────────────────────────────────────────────
+
+  function _canvasXY(e) {
+    const rect = _rCanvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  // Returns the resize/move type for a given pointer position, or null
+  function _hitTest(px, py) {
+    const { x, y, w: rw, h: rh } = _rect;
+    const hs = HANDLE_SIZE + 2; // slightly larger hit area
+    const cx = x + rw / 2;
+    const cy = y + rh / 2;
+
+    // Corners (checked first — they take priority over edges)
+    if (Math.abs(px - x)      <= hs && Math.abs(py - y)      <= hs) return "resize-nw";
+    if (Math.abs(px - (x+rw)) <= hs && Math.abs(py - y)      <= hs) return "resize-ne";
+    if (Math.abs(px - x)      <= hs && Math.abs(py - (y+rh)) <= hs) return "resize-sw";
+    if (Math.abs(px - (x+rw)) <= hs && Math.abs(py - (y+rh)) <= hs) return "resize-se";
+    // Edges
+    if (Math.abs(py - y)      <= hs && px >= x && px <= x + rw) return "resize-n";
+    if (Math.abs(py - (y+rh)) <= hs && px >= x && px <= x + rw) return "resize-s";
+    if (Math.abs(px - x)      <= hs && py >= y && py <= y + rh) return "resize-w";
+    if (Math.abs(px - (x+rw)) <= hs && py >= y && py <= y + rh) return "resize-e";
+    // Interior
+    if (px >= x && px <= x + rw && py >= y && py <= y + rh) return "move";
+    return null;
+  }
+
+  function _clampRect() {
+    const cw = _rCanvas.width;
+    const ch = _rCanvas.height;
+    _rect.w = Math.max(MIN_W, Math.min(_rect.w, cw));
+    _rect.h = Math.max(MIN_H, Math.min(_rect.h, ch));
+    _rect.x = Math.max(0, Math.min(_rect.x, cw - _rect.w));
+    _rect.y = Math.max(0, Math.min(_rect.y, ch - _rect.h));
+  }
+
+  function _onRectMouseDown(e) {
+    if (!_rCanvas) return;
+    e.preventDefault();
+    const { x, y } = _canvasXY(e);
+    const type = _hitTest(x, y);
+    if (!type) return;
+    _drag = { type, startX: x, startY: y, startRect: { ..._rect } };
+  }
+
+  function _onRectMouseMove(e) {
+    if (!_rCanvas) return;
+
+    // Update cursor
+    if (!_drag) {
+      const { x, y } = _canvasXY(e);
+      const type = _hitTest(x, y);
+      const cursorMap = {
+        "move": "move",
+        "resize-n": "n-resize", "resize-s": "s-resize",
+        "resize-e": "e-resize", "resize-w": "w-resize",
+        "resize-nw": "nw-resize", "resize-ne": "ne-resize",
+        "resize-sw": "sw-resize", "resize-se": "se-resize"
+      };
+      const container = document.getElementById("rect-crop-container");
+      if (container) container.style.cursor = type ? (cursorMap[type] || "default") : "default";
+      return;
+    }
+
+    e.preventDefault();
+    const { x, y } = _canvasXY(e);
+    const dx = x - _drag.startX;
+    const dy = y - _drag.startY;
+    const sr = _drag.startRect;
+
+    if (_drag.type === "move") {
+      _rect.x = sr.x + dx;
+      _rect.y = sr.y + dy;
+    } else {
+      // Resize: compute new rect from start rect + delta
+      let nx = sr.x, ny = sr.y, nw = sr.w, nh = sr.h;
+      const t = _drag.type;
+      if (t.includes("n")) { ny = sr.y + dy; nh = sr.h - dy; }
+      if (t.includes("s")) { nh = sr.h + dy; }
+      if (t.includes("w")) { nx = sr.x + dx; nw = sr.w - dx; }
+      if (t.includes("e")) { nw = sr.w + dx; }
+      // Enforce minimums (prevent inversion)
+      if (nw < MIN_W) { if (t.includes("w")) { nx = sr.x + sr.w - MIN_W; } nw = MIN_W; }
+      if (nh < MIN_H) { if (t.includes("n")) { ny = sr.y + sr.h - MIN_H; } nh = MIN_H; }
+      _rect = { x: nx, y: ny, w: nw, h: nh };
+    }
+    _clampRect();
+    _drawRectOverlay();
+  }
+
+  function _onRectMouseUp(e) {
+    _drag = null;
+  }
+})();
+
+function removeImage(previewId, settingKey) {
+  const preview = document.getElementById(previewId);
+  preview.src = "";
+  preview.style.display = "none";
+  document.getElementById(previewId.replace("preview", "remove")).style.display = "none";
+  _stored[settingKey] = "";
+  // Also clear the file input
+  const inputId = previewId.replace("preview", "input");
+  document.getElementById(inputId).value = "";
+}
+
+function loadPersonalInfo() {
+  document.getElementById("personal-full-name").value = _stored.personal_full_name || "";
+  document.getElementById("personal-email").value = _stored.personal_email || "";
+  document.getElementById("personal-phone").value = _stored.personal_phone || "";
+  document.getElementById("personal-website").value = _stored.personal_website || "";
+  document.getElementById("personal-address").value = _stored.personal_address || "";
+  // Load photo
+  if (_stored.personal_photo) {
+    document.getElementById("personal-photo-preview").src = _stored.personal_photo;
+    document.getElementById("personal-photo-preview").style.display = "block";
+    document.getElementById("personal-photo-remove").style.display = "";
+  } else {
+    document.getElementById("personal-photo-preview").style.display = "none";
+    document.getElementById("personal-photo-remove").style.display = "none";
+  }
+  // Load signature
+  if (_stored.personal_signature) {
+    document.getElementById("personal-signature-preview").src = _stored.personal_signature;
+    document.getElementById("personal-signature-preview").style.display = "block";
+    document.getElementById("personal-signature-remove").style.display = "";
+  } else {
+    document.getElementById("personal-signature-preview").style.display = "none";
+    document.getElementById("personal-signature-remove").style.display = "none";
+  }
+}
+
+async function savePersonalInfo() {
+  const msg = document.getElementById("personal-info-msg");
+  msg.textContent = "";
+  msg.className = "status-msg";
+  const body = {
+    personal_full_name: document.getElementById("personal-full-name").value.trim(),
+    personal_email: document.getElementById("personal-email").value.trim(),
+    personal_phone: document.getElementById("personal-phone").value.trim(),
+    personal_website: document.getElementById("personal-website").value.trim(),
+    personal_address: document.getElementById("personal-address").value.trim(),
+    personal_photo: _stored.personal_photo || "",
+    personal_signature: _stored.personal_signature || "",
+  };
+  try {
+    await apiFetch("POST", "/settings", body);
+    Object.assign(_stored, body);
+    msg.textContent = "Saved";
+    msg.className = "status-msg success";
+    setTimeout(() => { msg.textContent = ""; }, 3000);
+  } catch (e) {
+    msg.textContent = "Failed to save";
+    msg.className = "status-msg error";
+  }
+}
+
 // Settings navigation
-function switchToSettings() {
+async function switchToSettings() {
   document.getElementById("dashboard-view").style.display = "none";
   document.getElementById("detail-view").style.display = "none";
   document.getElementById("settings-view").style.display = "flex";
-  loadAiSettings();
-  loadKbSettings();
+  await loadAiSettings();
+  loadPersonalInfo();
+  await loadKbSettings();
   loadGmailSettings();
+  await loadPromptSettings();
 }
 
 function switchToDashboard() {
@@ -2166,11 +3291,13 @@ async function loadAiSettings() {
   }
 }
 
+var _suppressAutoSave = false;
+
 function renderProviderDropdown() {
   const sel = document.getElementById("ai-provider");
   sel.innerHTML = "";
   if (!_catalog) return;
-  const current = _stored.llm_provider || "openai";
+  const current = _stored.llm_provider || (_catalog.providers[0] && _catalog.providers[0].id) || "openai";
   _catalog.providers.forEach(function(p) {
     const opt = document.createElement("option");
     opt.value = p.id;
@@ -2178,7 +3305,9 @@ function renderProviderDropdown() {
     if (p.id === current) opt.selected = true;
     sel.appendChild(opt);
   });
+  _suppressAutoSave = true;
   onProviderChange();
+  _suppressAutoSave = false;
 }
 
 function _providerById(id) {
@@ -2189,6 +3318,34 @@ function _providerById(id) {
 function _providerHasKey(id) {
   if (id === "ollama") return true;
   return !!_stored[id + "_api_key_set"];
+}
+
+var _autoSaveTimer = null;
+
+function _autoSaveProviderModel() {
+  if (_suppressAutoSave) return;
+  // Debounce: wait 400ms after last change before saving
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+  _autoSaveTimer = setTimeout(async function() {
+    var pid = document.getElementById("ai-provider").value;
+    var model = document.getElementById("ai-model").value;
+    if (!pid || !model) return;
+    try {
+      await apiFetch("POST", "/settings", { llm_provider: pid, llm_model: model });
+      _stored.llm_provider = pid;
+      _stored.llm_model = model;
+      var msgEl = document.getElementById("ai-settings-msg");
+      msgEl.textContent = "Provider & model saved";
+      msgEl.className = "status-msg success";
+      msgEl.style.display = "block";
+      setTimeout(function() { if (msgEl.textContent === "Provider & model saved") msgEl.style.display = "none"; }, 2000);
+    } catch (e) {
+      var msgEl = document.getElementById("ai-settings-msg");
+      msgEl.textContent = "Auto-save failed: " + e.message;
+      msgEl.className = "status-msg error";
+      msgEl.style.display = "block";
+    }
+  }, 400);
 }
 
 function onProviderChange() {
@@ -2219,6 +3376,9 @@ function onProviderChange() {
 
   // Credential fields
   renderCredentialFields(prov);
+
+  // Auto-save provider+model when user changes provider
+  _autoSaveProviderModel();
 }
 
 function renderCredentialFields(prov) {
@@ -2347,25 +3507,110 @@ async function saveTemplateSettings() {
   }
 }
 
+// ── System Prompt settings ──────────────────────────────────────────────────
+let _promptDefaults = null;
+
+const _promptKeys = [
+  "prompt_generate_first", "prompt_generate_revise",
+  "prompt_analyze_fit", "prompt_analyze_quality",
+  "prompt_apply_suggestions", "prompt_reduce_size"
+];
+
+function _promptElId(key) {
+  return key.replace(/_/g, "-");  // prompt_generate_first -> prompt-generate-first
+}
+
+async function loadPromptDefaults() {
+  if (_promptDefaults) return _promptDefaults;
+  try {
+    var resp = await apiFetch("GET", "/prompts/defaults");
+    _promptDefaults = await resp.json();
+  } catch (e) {
+    console.error("Failed to load prompt defaults:", e);
+    _promptDefaults = {};
+  }
+  return _promptDefaults;
+}
+
+async function loadPromptSettings() {
+  var defaults = await loadPromptDefaults();
+  for (var key of _promptKeys) {
+    var el = document.getElementById(_promptElId(key));
+    if (!el) continue;
+    // Use stored value if set, otherwise use default
+    el.value = _stored[key] || defaults[key] || "";
+  }
+}
+
+async function savePromptSettings() {
+  var msgEl = document.getElementById("prompt-settings-msg");
+  msgEl.textContent = "Saving...";
+  msgEl.className = "status-msg";
+  msgEl.style.display = "block";
+
+  var body = {};
+  var defaults = await loadPromptDefaults();
+  for (var key of _promptKeys) {
+    var el = document.getElementById(_promptElId(key));
+    if (!el) continue;
+    var val = el.value.trim();
+    // Only save if different from default (save empty string to clear custom prompt)
+    if (val && val !== (defaults[key] || "").trim()) {
+      body[key] = val;
+    }
+  }
+
+  if (Object.keys(body).length === 0) {
+    msgEl.textContent = "No changes to save \u2014 all prompts match defaults.";
+    msgEl.className = "status-msg";
+    return;
+  }
+
+  try {
+    await apiFetch("POST", "/settings", body);
+    msgEl.textContent = "Prompts saved successfully";
+    msgEl.className = "status-msg success";
+    for (var k in body) _stored[k] = body[k];
+  } catch (e) {
+    msgEl.textContent = "Error: " + e.message;
+    msgEl.className = "status-msg error";
+  }
+}
+
+async function resetPrompt(key) {
+  var defaults = await loadPromptDefaults();
+  var el = document.getElementById(_promptElId(key));
+  if (el && defaults[key]) {
+    el.value = defaults[key];
+  }
+}
+
 // ── Knowledge Base settings ──────────────────────────────────────────────────
 
 let _kbNamespaces = [];
 
 async function loadKbSettings() {
-  // Fetch namespaces from KB
+  // Get saved settings and populate numeric fields immediately (synchronous, no await)
+  var saved = _stored || {};
+  var searchNs = [];
+  var includeNs = [];
+  try { searchNs = JSON.parse(saved.kb_retrieval_namespaces || "[]"); } catch(e) {}
+  try { includeNs = JSON.parse(saved.kb_include_namespaces || "[]"); } catch(e) {}
+
+  var nResults = saved.kb_retrieval_n_results != null ? parseInt(saved.kb_retrieval_n_results) : 5;
+  if (isNaN(nResults)) nResults = 5;
+  var padding = saved.kb_retrieval_padding != null ? parseInt(saved.kb_retrieval_padding) : 0;
+  if (isNaN(padding)) padding = 0;
+  document.getElementById("kb-n-results").value = nResults;
+  document.getElementById("kb-padding").value = padding;
+
+  // Fetch namespaces from KB (may be slow or fail, independent of numeric fields)
   try {
     var nsResp = await apiFetch("GET", "/kb/namespaces");
     _kbNamespaces = await nsResp.json();
   } catch (e) {
     _kbNamespaces = [];
   }
-
-  // Get saved settings
-  var saved = _stored || {};
-  var searchNs = [];
-  var includeNs = [];
-  try { searchNs = JSON.parse(saved.kb_retrieval_namespaces || "[]"); } catch(e) {}
-  try { includeNs = JSON.parse(saved.kb_include_namespaces || "[]"); } catch(e) {}
 
   // Populate search namespaces checkboxes
   var searchDiv = document.getElementById("kb-search-namespaces");
@@ -2400,12 +3645,6 @@ async function loadKbSettings() {
       includeDiv.appendChild(row);
     });
   }
-
-  // Set numeric fields
-  var nResults = parseInt(saved.kb_retrieval_n_results) || 5;
-  var padding = parseInt(saved.kb_retrieval_padding) || 0;
-  document.getElementById("kb-n-results").value = nResults;
-  document.getElementById("kb-padding").value = padding;
 }
 
 async function saveKbSettings() {
@@ -2426,8 +3665,10 @@ async function saveKbSettings() {
     includeNs.push(cb.value);
   });
 
-  var nResults = parseInt(document.getElementById("kb-n-results").value) || 5;
-  var padding = parseInt(document.getElementById("kb-padding").value) || 0;
+  var nResults = parseInt(document.getElementById("kb-n-results").value);
+  if (isNaN(nResults)) nResults = 5;
+  var padding = parseInt(document.getElementById("kb-padding").value);
+  if (isNaN(padding)) padding = 0;
 
   var body = {
     kb_retrieval_namespaces: JSON.stringify(searchNs),
@@ -2478,30 +3719,41 @@ async function testKbRetrieval() {
     const result = await resp.json();
 
     var lines = ["=== Test Results ==="];
+    var hasError = false;
 
     if (result.search_error) {
-      lines.push("Semantic Search: ERROR");
-      lines.push(result.search_error);
+      lines.push("Semantic Search: ERROR - " + result.search_error);
+      hasError = true;
     } else if (result.search_results) {
-      lines.push("Semantic Search: OK - " + result.search_results.length + " results");
+      lines.push("Semantic Search: OK - " + result.search_results.length + " chunks matched");
     }
 
-    if (result.list_error) {
-      lines.push("List Documents: ERROR");
-      lines.push(result.list_error);
-    } else if (result.list_results !== null) {
-      lines.push("List Documents: OK - " + result.list_results.length + " documents");
-      if (result.list_results.length === 0) {
+    if (result.namespace_summaries) {
+      lines.push("");
+      lines.push("=== Full-include Namespaces ===");
+      result.namespace_summaries.forEach(function(ns) {
+        var docs = ns.documents || [];
+        var totalChunks = docs.reduce(function(sum, d) { return sum + d.chunks; }, 0);
         lines.push("");
-        lines.push("WARNING: Namespace is empty.");
-        lines.push("Import content to the KB first.");
-      }
+        lines.push("[" + ns.namespace_id + "] " + docs.length + " document" + (docs.length !== 1 ? "s" : "") + ", " + totalChunks + " chunk" + (totalChunks !== 1 ? "s" : ""));
+        if (ns.error) {
+          lines.push("  ERROR: " + ns.error);
+          hasError = true;
+        } else if (docs.length === 0) {
+          lines.push("  WARNING: Namespace is empty. Import content to the KB first.");
+          hasError = true;
+        } else {
+          docs.forEach(function(d) {
+            lines.push("  - " + d.file_name + " (" + d.chunks + " chunk" + (d.chunks !== 1 ? "s" : "") + ")");
+          });
+        }
+      });
     }
 
     var msg = lines.join(String.fromCharCode(10));
 
     msgEl.textContent = msg;
-    msgEl.className = result.list_error || result.search_error ? "status-msg error" : "status-msg success";
+    msgEl.className = hasError ? "status-msg error" : "status-msg success";
   } catch (e) {
     msgEl.textContent = "Error: " + e.message;
     msgEl.className = "status-msg error";
@@ -2721,14 +3973,28 @@ var _saveRetries = { cv: 0, cover_letter: 0 };
 var _docTabLoaded = { cv: false, cover_letter: false };
 var _currentPdfUrl = { cv: null, cover_letter: null };
 var _cmEditors = { cv: null, cover_letter: null };
+var _eqLoaded = false;
+var _eqSaveTimers = {};
+var _ivLoaded = false;
+var _ivSaveTimers = {};
+var _ofLoaded = false;
+var _ofSaveTimers = {};
 
 function _downloadPdf(docType) {
   var url = _currentPdfUrl[docType];
   if (!url) return;
   var a = document.createElement("a");
   a.href = url;
-  var title = _currentDocId[docType] ? _currentDocId[docType].slice(0, 8) : "document";
-  a.download = docType.replace("_", "-") + "-" + title + ".pdf";
+  var sanitize = function(s) { return (s || "").replace(/[^\w\-]/g, "_").replace(/^_+|_+$/g, ""); };
+  var fname;
+  if (docType === "cv") {
+    var author = sanitize(_stored.personal_full_name);
+    fname = author ? "CV_" + author + ".pdf" : "CV.pdf";
+  } else {
+    var pos = sanitize((document.getElementById("detail-position") || {}).textContent);
+    fname = pos ? "CoverLetter_" + pos + ".pdf" : "CoverLetter.pdf";
+  }
+  a.download = fname;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -2812,11 +4078,25 @@ function _loadDocIntoEditor(docType, doc) {
   _setInstructionsFromJson(docType, doc.prompt_text || "");
   _cmEditors[docType].setValue(doc.latex_source || "");
   _currentDocId[docType] = doc.id;
-  var frame = document.getElementById(docType + "-preview-frame");
-  var msg = (doc.latex_source && doc.latex_source.trim())
-    ? "Click Compile to see preview"
-    : "Write LaTeX to see preview";
-  frame.innerHTML = '<div class="pdf-placeholder">' + msg + '</div>';
+  // Try loading cached PDF; fall back to placeholder
+  var pdfUrl = API_BASE + "/documents/" + doc.id + "/pdf";
+  fetch(pdfUrl, { method: "HEAD" }).then(function(r) {
+    if (r.ok) {
+      _currentPdfUrl[docType] = pdfUrl;
+      _renderPdf(docType, pdfUrl + "?t=" + Date.now());
+      document.getElementById(docType + "-download-btn").style.display = "";
+    } else {
+      var frame = document.getElementById(docType + "-preview-frame");
+      var msg = (doc.latex_source && doc.latex_source.trim())
+        ? "Click Compile to see preview"
+        : "Write LaTeX to see preview";
+      frame.innerHTML = '<div class="pdf-placeholder">' + msg + '</div>';
+      document.getElementById(docType + "-download-btn").style.display = "none";
+    }
+  }).catch(function() {
+    var frame = document.getElementById(docType + "-preview-frame");
+    frame.innerHTML = '<div class="pdf-placeholder">Click Compile to see preview</div>';
+  });
   _loadVersions(docType);
 }
 
@@ -2830,7 +4110,9 @@ function _onDocSelect(docType) {
 
 async function _createDoc(docType) {
   if (!currentDetailId) return;
-  var title = docType === "cv" ? "New CV" : "New Cover Letter";
+  var defaultTitle = docType === "cv" ? "New CV" : "New Cover Letter";
+  var title = prompt("Name for this " + (docType === "cv" ? "CV" : "Cover Letter") + ":", defaultTitle);
+  if (!title) return;
   var defaultLatex = docType === "cv" ? _stored.cv_latex_template : _stored.cover_letter_latex_template;
   if (!defaultLatex) {
     try {
@@ -2905,6 +4187,26 @@ async function _deleteCurrentDoc(docType) {
     _setDocStatus(docType, "Deleted", "success");
   } catch (e) {
     _setDocStatus(docType, "Delete failed", "error");
+  }
+}
+
+async function _renameCurrentDoc(docType) {
+  var docId = _currentDocId[docType];
+  if (!docId) return;
+  var current = _docLists[docType].find(function(d) { return d.id === docId; });
+  var newTitle = prompt("Rename document:", current ? current.title : "");
+  if (!newTitle || newTitle === (current && current.title)) return;
+  try {
+    var resp = await apiFetch("PUT", "/documents/" + docId, { title: newTitle });
+    var updated = await resp.json();
+    var idx = _docLists[docType].findIndex(function(d) { return d.id === docId; });
+    if (idx >= 0) _docLists[docType][idx] = updated;
+    var sel = document.getElementById(docType + "-doc-select");
+    var opt = sel.querySelector('option[value="' + docId + '"]');
+    if (opt) opt.textContent = updated.title;
+    _setDocStatus(docType, "Renamed", "success");
+  } catch (e) {
+    _setDocStatus(docType, "Rename failed", "error");
   }
 }
 
@@ -2995,7 +4297,7 @@ function _buildInstructionsFromLatex(docType, latex) {
     var cb = f.querySelector("input[type=checkbox]");
     oldData[k] = {
       text: ta ? ta.value : "",
-      enabled: cb ? cb.checked : true,
+      checked: cb ? cb.checked : false,
     };
   });
 
@@ -3021,14 +4323,26 @@ function _buildInstructionsFromLatex(docType, latex) {
       }
     }
   } else {
-    var re = /\\\\paragraph\{([^}]+)\}/g;
+    // Primary: detect sections from <<NAME-PARAGRAPH: ...>> template markers
+    var re = /<<([A-Z][A-Z-]*)-PARAGRAPH:/g;
     var match;
     var seen = {};
     while ((match = re.exec(latex)) !== null) {
-      var name = match[1];
+      var name = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
       if (!seen[name]) {
         seen[name] = true;
         sections.push({ key: name, label: name });
+      }
+    }
+    // Fallback: detect from \paragraph{Name} (markers replaced after generation)
+    if (sections.length === 0) {
+      re = /\\\\paragraph\{([^}]+)\}/g;
+      while ((match = re.exec(latex)) !== null) {
+        var name = match[1];
+        if (!seen[name]) {
+          seen[name] = true;
+          sections.push({ key: name, label: name });
+        }
       }
     }
   }
@@ -3039,7 +4353,7 @@ function _buildInstructionsFromLatex(docType, latex) {
     if (oldData[s.key]) {
       f.querySelector(".instruction-textarea").value = oldData[s.key].text;
       var cb = f.querySelector("input[type=checkbox]");
-      if (cb) cb.checked = oldData[s.key].enabled;
+      if (cb) cb.checked = oldData[s.key].checked;
     }
   });
 }
@@ -3066,7 +4380,7 @@ function _getInstructionsAsJson(docType) {
         key: k,
         label: label,
         text: text,
-        enabled: cb ? cb.checked : true,
+        enabled: cb ? !cb.checked : true,
       });
     }
   });
@@ -3103,8 +4417,596 @@ function _setInstructionsFromJson(docType, jsonStr) {
       var ta = f.querySelector(".instruction-textarea");
       var cb = f.querySelector("input[type=checkbox]");
       if (ta && s.text != null) ta.value = s.text;
-      if (cb && s.enabled != null) cb.checked = s.enabled;
+      if (cb && s.enabled != null) cb.checked = !s.enabled;
     });
+  }
+}
+
+// ── Extra questions ─────────────────────────────────────────────────────────
+
+async function _eqLoad() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("GET", "/applications/" + currentDetailId + "/questions");
+    var questions = await resp.json();
+    _eqRender(questions);
+  } catch (e) {
+    console.error("Failed to load extra questions:", e);
+  }
+}
+
+function _eqRender(questions) {
+  var list = document.getElementById("eq-list");
+  var empty = document.getElementById("eq-empty");
+  list.innerHTML = "";
+  empty.style.display = questions.length ? "none" : "block";
+
+  questions.forEach(function(q) {
+    list.appendChild(_eqMakeCard(q));
+  });
+}
+
+function _eqMakeCard(q) {
+  var card = document.createElement("div");
+  card.className = "eq-card";
+  card.dataset.eqId = q.id;
+
+  // Header
+  var header = document.createElement("div");
+  header.className = "eq-card-header";
+  header.addEventListener("click", function(e) {
+    if (e.target.closest(".eq-actions")) return;
+    _eqToggle(card);
+  });
+
+  var chevron = document.createElement("span");
+  chevron.className = "eq-chevron";
+  chevron.innerHTML = "&#x25B6;";
+
+  var preview = document.createElement("span");
+  preview.className = "eq-question-preview";
+  preview.textContent = q.question || "New Question";
+
+  var actions = document.createElement("span");
+  actions.className = "eq-actions";
+
+  var wcWrap = document.createElement("span");
+  wcWrap.className = "eq-word-cap-wrap";
+  wcWrap.innerHTML = "Word cap: ";
+  var wcInput = document.createElement("input");
+  wcInput.type = "number";
+  wcInput.min = "0";
+  wcInput.value = q.word_cap != null ? q.word_cap : "";
+  wcInput.placeholder = "-";
+  wcInput.addEventListener("input", function() { _eqScheduleSave(q.id); });
+  wcInput.dataset.field = "word_cap";
+  wcWrap.appendChild(wcInput);
+
+  var delBtn = document.createElement("button");
+  delBtn.className = "eq-btn-delete";
+  delBtn.title = "Delete question";
+  delBtn.innerHTML = "&#x2715;";
+  delBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    _eqDelete(q.id);
+  });
+
+  actions.appendChild(wcWrap);
+  actions.appendChild(delBtn);
+  header.appendChild(chevron);
+  header.appendChild(preview);
+  header.appendChild(actions);
+
+  // Body
+  var body = document.createElement("div");
+  body.className = "eq-card-body";
+
+  var qGroup = document.createElement("div");
+  qGroup.className = "form-group";
+  var qLabel = document.createElement("label");
+  qLabel.className = "field-label";
+  qLabel.textContent = "Question";
+  var qInput = document.createElement("input");
+  qInput.className = "field-input";
+  qInput.type = "text";
+  qInput.value = q.question || "";
+  qInput.placeholder = "Enter question\u2026";
+  qInput.dataset.field = "question";
+  qInput.addEventListener("input", function() {
+    preview.textContent = qInput.value || "New Question";
+    _eqScheduleSave(q.id);
+  });
+  qGroup.appendChild(qLabel);
+  qGroup.appendChild(qInput);
+
+  var aGroup = document.createElement("div");
+  aGroup.className = "form-group";
+  var aLabel = document.createElement("label");
+  aLabel.className = "field-label";
+  aLabel.textContent = "Answer";
+  var aTextarea = document.createElement("textarea");
+  aTextarea.value = q.answer || "";
+  aTextarea.placeholder = "Enter answer\u2026";
+  aTextarea.dataset.field = "answer";
+  aTextarea.addEventListener("input", function() {
+    _eqAutoResize(aTextarea);
+    _eqScheduleSave(q.id);
+  });
+  aGroup.appendChild(aLabel);
+  aGroup.appendChild(aTextarea);
+
+  body.appendChild(qGroup);
+  body.appendChild(aGroup);
+
+  card.appendChild(header);
+  card.appendChild(body);
+
+  // Auto-resize textarea once visible
+  requestAnimationFrame(function() { _eqAutoResize(aTextarea); });
+
+  return card;
+}
+
+function _eqToggle(card) {
+  card.classList.toggle("expanded");
+  // Resize textareas when expanding
+  if (card.classList.contains("expanded")) {
+    card.querySelectorAll("textarea").forEach(function(ta) {
+      _eqAutoResize(ta);
+    });
+  }
+}
+
+function _eqAutoResize(ta) {
+  ta.style.height = "auto";
+  ta.style.height = ta.scrollHeight + "px";
+}
+
+async function _eqAdd() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("POST", "/applications/" + currentDetailId + "/questions", {});
+    var q = await resp.json();
+    var list = document.getElementById("eq-list");
+    var card = _eqMakeCard(q);
+    list.appendChild(card);
+    card.classList.add("expanded");
+    document.getElementById("eq-empty").style.display = "none";
+    // Focus the question input
+    var qInput = card.querySelector('input[data-field="question"]');
+    if (qInput) qInput.focus();
+  } catch (e) {
+    console.error("Failed to add question:", e);
+  }
+}
+
+function _eqScheduleSave(questionId) {
+  if (_eqSaveTimers[questionId]) clearTimeout(_eqSaveTimers[questionId]);
+  _eqSaveTimers[questionId] = setTimeout(function() { _eqSave(questionId); }, 2000);
+}
+
+async function _eqSave(questionId) {
+  var card = document.querySelector('.eq-card[data-eq-id="' + questionId + '"]');
+  if (!card) return;
+  var qInput = card.querySelector('input[data-field="question"]');
+  var aTextarea = card.querySelector('textarea[data-field="answer"]');
+  var wcInput = card.querySelector('input[data-field="word_cap"]');
+  var body = {
+    question: qInput ? qInput.value : "",
+    answer: aTextarea ? aTextarea.value : "",
+  };
+  var wc = wcInput ? wcInput.value.trim() : "";
+  body.word_cap = wc !== "" ? parseInt(wc, 10) : null;
+  try {
+    await apiFetch("PUT", "/questions/" + questionId, body);
+  } catch (e) {
+    console.error("Failed to save question:", e);
+  }
+}
+
+async function _eqDelete(questionId) {
+  if (!confirm("Delete this question?")) return;
+  try {
+    await apiFetch("DELETE", "/questions/" + questionId);
+    var card = document.querySelector('.eq-card[data-eq-id="' + questionId + '"]');
+    if (card) card.remove();
+    var list = document.getElementById("eq-list");
+    if (list && !list.children.length) {
+      document.getElementById("eq-empty").style.display = "block";
+    }
+  } catch (e) {
+    console.error("Failed to delete question:", e);
+  }
+}
+
+// ── HTML escape helpers ─────────────────────────────────────────────────
+
+function _escHtml(s) {
+  var d = document.createElement("div");
+  d.textContent = s || "";
+  return d.innerHTML;
+}
+
+function _escAttr(s) {
+  return (s || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// ── Interview rounds ────────────────────────────────────────────────────
+
+async function _ivLoad() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("GET", "/applications/" + currentDetailId + "/interviews");
+    var data = await resp.json();
+    _ivRender(data);
+  } catch (e) {
+    console.error("Failed to load interview rounds:", e);
+  }
+}
+
+function _ivRender(items) {
+  var list = document.getElementById("iv-list");
+  var empty = document.getElementById("iv-empty");
+  list.innerHTML = "";
+  empty.style.display = items.length ? "none" : "";
+  items.forEach(function(item) { list.appendChild(_ivMakeCard(item)); });
+}
+
+function _ivMakeCard(item) {
+  var card = document.createElement("div");
+  card.className = "eq-card";
+  card.dataset.ivId = item.id;
+
+  var roundTypes = [
+    {v:"phone_screen",l:"Phone Screen"},{v:"technical",l:"Technical"},
+    {v:"behavioral",l:"Behavioral"},{v:"hiring_manager",l:"Hiring Manager"},
+    {v:"panel",l:"Panel"},{v:"other",l:"Other"}
+  ];
+  var statuses = [
+    {v:"scheduled",l:"Scheduled"},{v:"completed",l:"Completed"},{v:"cancelled",l:"Cancelled"}
+  ];
+
+  var typeLabel = roundTypes.find(function(t){ return t.v === item.round_type; });
+  typeLabel = typeLabel ? typeLabel.l : item.round_type;
+
+  var dateStr = item.scheduled_at ? " \u00b7 " + item.scheduled_at : "";
+  var interviewerStr = item.interviewer_names ? " \u00b7 " + item.interviewer_names : "";
+
+  // Header (DOM construction, like extra questions)
+  var header = document.createElement("div");
+  header.className = "eq-card-header";
+  header.addEventListener("click", function(e) {
+    if (e.target.closest(".eq-actions")) return;
+    _ivToggle(card);
+  });
+
+  var chevron = document.createElement("span");
+  chevron.className = "eq-chevron";
+  chevron.innerHTML = "&#x25B6;";
+
+  var preview = document.createElement("span");
+  preview.className = "eq-question-preview";
+  preview.innerHTML = "<strong>" + _escHtml(typeLabel) + "</strong>" + dateStr + interviewerStr;
+
+  var actions = document.createElement("span");
+  actions.className = "eq-actions";
+
+  var statusBadge = document.createElement("span");
+  statusBadge.className = "badge badge-" + item.status;
+  statusBadge.textContent = item.status;
+
+  var delBtn = document.createElement("button");
+  delBtn.className = "eq-btn-delete";
+  delBtn.title = "Delete round";
+  delBtn.innerHTML = "&#x2715;";
+  delBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    _ivDelete(item.id);
+  });
+
+  actions.appendChild(statusBadge);
+  actions.appendChild(delBtn);
+  header.appendChild(chevron);
+  header.appendChild(preview);
+  header.appendChild(actions);
+  card.appendChild(header);
+
+  // Body
+  var body = document.createElement("div");
+  body.className = "eq-card-body";
+
+  var typeOpts = roundTypes.map(function(t){ return "<option value=\\"" + t.v + "\\"" + (t.v === item.round_type ? " selected" : "") + ">" + t.l + "</option>"; }).join("");
+  var statusOpts = statuses.map(function(s){ return "<option value=\\"" + s.v + "\\"" + (s.v === item.status ? " selected" : "") + ">" + s.l + "</option>"; }).join("");
+
+  var confidenceOpts = "<option value=\\"\\">—</option>";
+  for (var i = 1; i <= 5; i++) {
+    confidenceOpts += "<option value=\\"" + i + "\\"" + (item.confidence === i ? " selected" : "") + ">" + i + "</option>";
+  }
+
+  body.innerHTML =
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Type</label><select class=\\"field-input iv-round_type\\" onchange=\\"_ivScheduleSave(this)\\">" + typeOpts + "</select></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Status</label><select class=\\"field-input iv-status\\" onchange=\\"_ivScheduleSave(this)\\">" + statusOpts + "</select></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Scheduled</label><input type=\\"date\\" class=\\"field-input iv-scheduled_at\\" value=\\"" + _escAttr(item.scheduled_at) + "\\" onchange=\\"_ivScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Interviewer(s)</label><input type=\\"text\\" class=\\"field-input iv-interviewer_names\\" value=\\"" + _escAttr(item.interviewer_names) + "\\" oninput=\\"_ivScheduleSave(this)\\"></div>" +
+    "</div>" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Location / Link</label><input type=\\"text\\" class=\\"field-input iv-location\\" value=\\"" + _escAttr(item.location) + "\\" oninput=\\"_ivScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Confidence (1-5)</label><select class=\\"field-input iv-confidence\\" onchange=\\"_ivScheduleSave(this)\\">" + confidenceOpts + "</select></div>" +
+    "</div>" +
+    "<label class=\\"field-label\\" style=\\"margin-top:16px;\\">Preparation</label>" +
+    "<div class=\\"form-group\\"><label class=\\"field-label\\">Prep Notes</label><textarea class=\\"field-input iv-prep_notes\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.prep_notes) + "</textarea></div>" +
+    "<label class=\\"field-label\\" style=\\"margin-top:16px;\\">Debrief</label>" +
+    "<div class=\\"form-group\\"><label class=\\"field-label\\">Questions Asked</label><textarea class=\\"field-input iv-questions_asked\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.questions_asked) + "</textarea></div>" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr;gap:12px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">What Went Well</label><textarea class=\\"field-input iv-went_well\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.went_well) + "</textarea></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">What To Improve</label><textarea class=\\"field-input iv-to_improve\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.to_improve) + "</textarea></div>" +
+    "</div>" +
+    "<div class=\\"form-group\\" style=\\"margin-top:12px;\\"><label class=\\"field-label\\">General Notes</label><textarea class=\\"field-input iv-debrief_notes\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.debrief_notes) + "</textarea></div>";
+  card.appendChild(body);
+  return card;
+}
+
+function _ivToggle(cardOrChild) {
+  var card = cardOrChild.classList.contains("eq-card") ? cardOrChild : cardOrChild.closest(".eq-card");
+  card.classList.toggle("expanded");
+  if (card.classList.contains("expanded")) {
+    card.querySelectorAll("textarea").forEach(function(ta) {
+      ta.style.height = "auto";
+      ta.style.height = ta.scrollHeight + "px";
+    });
+  }
+}
+
+async function _ivAdd() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("POST", "/applications/" + currentDetailId + "/interviews", {});
+    var item = await resp.json();
+    document.getElementById("iv-empty").style.display = "none";
+    var card = _ivMakeCard(item);
+    document.getElementById("iv-list").appendChild(card);
+    var chevron = card.querySelector(".eq-chevron");
+    _ivToggle(chevron);
+  } catch (e) {
+    console.error("Failed to add interview round:", e);
+  }
+}
+
+function _ivScheduleSave(el) {
+  var card = el.closest(".eq-card");
+  var id = card.dataset.ivId;
+  clearTimeout(_ivSaveTimers[id]);
+  _ivSaveTimers[id] = setTimeout(function() { _ivSave(card, id); }, 2000);
+}
+
+async function _ivSave(card, id) {
+  var conf = card.querySelector(".iv-confidence").value;
+  var body = {
+    round_type: card.querySelector(".iv-round_type").value,
+    status: card.querySelector(".iv-status").value,
+    scheduled_at: card.querySelector(".iv-scheduled_at").value || null,
+    interviewer_names: card.querySelector(".iv-interviewer_names").value,
+    location: card.querySelector(".iv-location").value,
+    confidence: conf ? parseInt(conf) : null,
+    prep_notes: card.querySelector(".iv-prep_notes").value,
+    questions_asked: card.querySelector(".iv-questions_asked").value,
+    went_well: card.querySelector(".iv-went_well").value,
+    to_improve: card.querySelector(".iv-to_improve").value,
+    debrief_notes: card.querySelector(".iv-debrief_notes").value,
+  };
+  try {
+    await apiFetch("PUT", "/interviews/" + id, body);
+    var roundTypes = {phone_screen:"Phone Screen",technical:"Technical",behavioral:"Behavioral",hiring_manager:"Hiring Manager",panel:"Panel",other:"Other"};
+    var preview = card.querySelector(".eq-question-preview");
+    var label = roundTypes[body.round_type] || body.round_type;
+    var dateStr = body.scheduled_at ? " \u00b7 " + body.scheduled_at : "";
+    var intStr = body.interviewer_names ? " \u00b7 " + body.interviewer_names : "";
+    preview.innerHTML = "<strong>" + label + "</strong>" + dateStr + intStr;
+    card.querySelectorAll(".badge").forEach(function(b) { b.className = "badge badge-" + body.status; b.textContent = body.status; });
+  } catch (e) {
+    console.error("Failed to save interview round", id, e);
+  }
+}
+
+async function _ivDelete(id) {
+  if (!confirm("Delete this interview round?")) return;
+  try {
+    await apiFetch("DELETE", "/interviews/" + id);
+    var card = document.querySelector('.eq-card[data-iv-id="' + id + '"]');
+    card.parentNode.removeChild(card);
+    if (!document.getElementById("iv-list").children.length) {
+      document.getElementById("iv-empty").style.display = "";
+    }
+  } catch (e) {
+    console.error("Failed to delete interview round:", e);
+  }
+}
+
+// ── Offers ──────────────────────────────────────────────────────────────
+
+async function _ofLoad() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("GET", "/applications/" + currentDetailId + "/offers");
+    var data = await resp.json();
+    _ofRender(data);
+  } catch (e) {
+    console.error("Failed to load offers:", e);
+  }
+}
+
+function _ofRender(items) {
+  var list = document.getElementById("of-list");
+  var empty = document.getElementById("of-empty");
+  list.innerHTML = "";
+  empty.style.display = items.length ? "none" : "";
+  items.forEach(function(item) { list.appendChild(_ofMakeCard(item)); });
+}
+
+function _ofMakeCard(item) {
+  var card = document.createElement("div");
+  card.className = "eq-card";
+  card.dataset.ofId = item.id;
+
+  var ofStatuses = [
+    {v:"pending",l:"Pending"},{v:"negotiating",l:"Negotiating"},
+    {v:"accepted",l:"Accepted"},{v:"declined",l:"Declined"},{v:"expired",l:"Expired"}
+  ];
+  var remotePolicies = [
+    {v:"",l:"—"},{v:"remote",l:"Remote"},{v:"hybrid",l:"Hybrid"},{v:"onsite",l:"On-site"}
+  ];
+  var currencies = ["EUR","USD","GBP","CHF","CAD","AUD","JPY","SEK","NOK","DKK"];
+
+  var statusLabel = ofStatuses.find(function(s){ return s.v === item.status; });
+  statusLabel = statusLabel ? statusLabel.l : item.status;
+  var salaryStr = item.base_salary ? (item.currency + " " + Number(item.base_salary).toLocaleString()) : "No salary set";
+
+  // Header (DOM construction, like extra questions)
+  var header = document.createElement("div");
+  header.className = "eq-card-header";
+  header.addEventListener("click", function(e) {
+    if (e.target.closest(".eq-actions")) return;
+    _ofToggle(card);
+  });
+
+  var chevron = document.createElement("span");
+  chevron.className = "eq-chevron";
+  chevron.innerHTML = "&#x25B6;";
+
+  var preview = document.createElement("span");
+  preview.className = "eq-question-preview";
+  preview.innerHTML = "<strong>" + _escHtml(salaryStr) + "</strong>";
+
+  var actions = document.createElement("span");
+  actions.className = "eq-actions";
+
+  var statusBadge = document.createElement("span");
+  statusBadge.className = "badge badge-" + item.status;
+  statusBadge.textContent = statusLabel;
+
+  var delBtn = document.createElement("button");
+  delBtn.className = "eq-btn-delete";
+  delBtn.title = "Delete offer";
+  delBtn.innerHTML = "&#x2715;";
+  delBtn.addEventListener("click", function(e) {
+    e.stopPropagation();
+    _ofDelete(item.id);
+  });
+
+  actions.appendChild(statusBadge);
+  actions.appendChild(delBtn);
+  header.appendChild(chevron);
+  header.appendChild(preview);
+  header.appendChild(actions);
+  card.appendChild(header);
+
+  // Body
+  var body = document.createElement("div");
+  body.className = "eq-card-body";
+
+  var statusOpts = ofStatuses.map(function(s){ return "<option value=\\"" + s.v + "\\"" + (s.v === item.status ? " selected" : "") + ">" + s.l + "</option>"; }).join("");
+  var currencyOpts = currencies.map(function(c){ return "<option value=\\"" + c + "\\"" + (c === item.currency ? " selected" : "") + ">" + c + "</option>"; }).join("");
+  var remoteOpts = remotePolicies.map(function(r){ return "<option value=\\"" + r.v + "\\"" + (r.v === item.remote_policy ? " selected" : "") + ">" + r.l + "</option>"; }).join("");
+
+  body.innerHTML =
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Status</label><select class=\\"field-input of-status\\" onchange=\\"_ofScheduleSave(this)\\">" + statusOpts + "</select></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Base Salary</label><input type=\\"number\\" class=\\"field-input of-base_salary\\" value=\\"" + _escAttr(item.base_salary) + "\\" oninput=\\"_ofScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Currency</label><select class=\\"field-input of-currency\\" onchange=\\"_ofScheduleSave(this)\\">" + currencyOpts + "</select></div>" +
+    "</div>" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Bonus</label><input type=\\"text\\" class=\\"field-input of-bonus\\" value=\\"" + _escAttr(item.bonus) + "\\" oninput=\\"_ofScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Equity</label><input type=\\"text\\" class=\\"field-input of-equity\\" value=\\"" + _escAttr(item.equity) + "\\" oninput=\\"_ofScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Signing Bonus</label><input type=\\"text\\" class=\\"field-input of-signing_bonus\\" value=\\"" + _escAttr(item.signing_bonus) + "\\" oninput=\\"_ofScheduleSave(this)\\"></div>" +
+    "</div>" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Benefits</label><textarea class=\\"field-input of-benefits\\" oninput=\\"_ofScheduleSave(this)\\">" + _escHtml(item.benefits) + "</textarea></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">PTO (days)</label><input type=\\"number\\" class=\\"field-input of-pto_days\\" value=\\"" + _escAttr(item.pto_days) + "\\" oninput=\\"_ofScheduleSave(this)\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Remote Policy</label><select class=\\"field-input of-remote_policy\\" onchange=\\"_ofScheduleSave(this)\\">" + remoteOpts + "</select></div>" +
+    "</div>" +
+    "<div style=\\"display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Start Date</label><input type=\\"date\\" class=\\"field-input of-start_date\\" onchange=\\"_ofScheduleSave(this)\\" value=\\"" + _escAttr(item.start_date) + "\\"></div>" +
+      "<div class=\\"form-group\\"><label class=\\"field-label\\">Expiry Date</label><input type=\\"date\\" class=\\"field-input of-expiry_date\\" onchange=\\"_ofScheduleSave(this)\\" value=\\"" + _escAttr(item.expiry_date) + "\\"></div>" +
+    "</div>" +
+    "<div class=\\"form-group\\"><label class=\\"field-label\\">Notes</label><textarea class=\\"field-input of-notes\\" oninput=\\"_ofScheduleSave(this)\\">" + _escHtml(item.notes) + "</textarea></div>";
+  card.appendChild(body);
+  return card;
+}
+
+function _ofToggle(cardOrChild) {
+  var card = cardOrChild.classList.contains("eq-card") ? cardOrChild : cardOrChild.closest(".eq-card");
+  card.classList.toggle("expanded");
+  if (card.classList.contains("expanded")) {
+    card.querySelectorAll("textarea").forEach(function(ta) {
+      ta.style.height = "auto";
+      ta.style.height = ta.scrollHeight + "px";
+    });
+  }
+}
+
+async function _ofAdd() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("POST", "/applications/" + currentDetailId + "/offers", {});
+    var item = await resp.json();
+    document.getElementById("of-empty").style.display = "none";
+    var card = _ofMakeCard(item);
+    document.getElementById("of-list").appendChild(card);
+    var chevron = card.querySelector(".eq-chevron");
+    _ofToggle(chevron);
+  } catch (e) {
+    console.error("Failed to add offer:", e);
+  }
+}
+
+function _ofScheduleSave(el) {
+  var card = el.closest(".eq-card");
+  var id = card.dataset.ofId;
+  clearTimeout(_ofSaveTimers[id]);
+  _ofSaveTimers[id] = setTimeout(function() { _ofSave(card, id); }, 2000);
+}
+
+async function _ofSave(card, id) {
+  var sal = card.querySelector(".of-base_salary").value;
+  var pto = card.querySelector(".of-pto_days").value;
+  var body = {
+    status: card.querySelector(".of-status").value,
+    base_salary: sal ? parseFloat(sal) : null,
+    currency: card.querySelector(".of-currency").value,
+    bonus: card.querySelector(".of-bonus").value,
+    equity: card.querySelector(".of-equity").value,
+    signing_bonus: card.querySelector(".of-signing_bonus").value,
+    benefits: card.querySelector(".of-benefits").value,
+    pto_days: pto ? parseInt(pto) : null,
+    remote_policy: card.querySelector(".of-remote_policy").value,
+    start_date: card.querySelector(".of-start_date").value || null,
+    expiry_date: card.querySelector(".of-expiry_date").value || null,
+    notes: card.querySelector(".of-notes").value,
+  };
+  try {
+    await apiFetch("PUT", "/offers/" + id, body);
+    var preview = card.querySelector(".eq-question-preview");
+    var salaryStr = body.base_salary ? (body.currency + " " + Number(body.base_salary).toLocaleString()) : "No salary set";
+    preview.innerHTML = "<strong>" + salaryStr + "</strong>";
+    var ofStatuses = {pending:"Pending",negotiating:"Negotiating",accepted:"Accepted",declined:"Declined",expired:"Expired"};
+    card.querySelectorAll(".badge").forEach(function(b) { b.className = "badge badge-" + body.status; b.textContent = ofStatuses[body.status] || body.status; });
+  } catch (e) {
+    console.error("Failed to save offer", id, e);
+  }
+}
+
+async function _ofDelete(id) {
+  if (!confirm("Delete this offer?")) return;
+  try {
+    await apiFetch("DELETE", "/offers/" + id);
+    var card = document.querySelector('.eq-card[data-of-id="' + id + '"]');
+    card.parentNode.removeChild(card);
+    if (!document.getElementById("of-list").children.length) {
+      document.getElementById("of-empty").style.display = "";
+    }
+  } catch (e) {
+    console.error("Failed to delete offer:", e);
   }
 }
 
@@ -3138,7 +5040,6 @@ async function _compileDoc(docType) {
 
     _showCompileOverlay(docType, false);
     _setDocStatus(docType, "Compiled", "success");
-    _loadVersions(docType);
     document.getElementById(docType + "-download-btn").style.display = "";
   } catch (e) {
     _setDocStatus(docType, "Compile error: " + e.message, "error");
@@ -3313,6 +5214,91 @@ async function _generateDoc(docType) {
 
       if (evt.node === "error") {
         _showCompileOverlay(docType, false);
+        _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
+      }
+    }
+  }
+}
+
+async function _critiqueDoc(docType) {
+  var docId = _currentDocId[docType];
+  if (!docId) return;
+
+  // Save current editor state first
+  var saveBody = {
+    latex_source: _cmEditors[docType].getValue(),
+    prompt_text: _getInstructionsAsJson(docType)
+  };
+  try {
+    await apiFetch("PUT", "/documents/" + docId, saveBody);
+  } catch (e) {
+    _setGenStatus(docType, "Save failed: " + e.message, "error");
+    return;
+  }
+
+  _setGenStatus(docType, "Starting critique...", "");
+
+  var resp;
+  try {
+    resp = await fetch(API_BASE + "/documents/" + docId + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ critique_only: true })
+    });
+  } catch (e) {
+    _setGenStatus(docType, "Network error: " + e.message, "error");
+    return;
+  }
+
+  if (!resp.ok) {
+    var errData = await resp.json().catch(function() { return { detail: "Request failed" }; });
+    _setGenStatus(docType, errData.detail || "Critique failed", "error");
+    return;
+  }
+
+  // Read SSE stream
+  var reader = resp.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = "";
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    var lines = buffer.split("\\n");
+    buffer = lines.pop();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.startsWith("data: ")) continue;
+      var raw = line.slice(6).trim();
+      if (!raw) continue;
+      var evt;
+      try { evt = JSON.parse(raw); } catch (e) { continue; }
+
+      if (evt.node && evt.node !== "done" && evt.node !== "error") {
+        var label = _GEN_NODE_LABELS[evt.node] || evt.node;
+        _setGenStatus(docType, label, "");
+      }
+
+      if (evt.node === "done") {
+        // Show agent feedback panel (don't update editor or PDF)
+        var panel = document.getElementById(docType + "-agent-feedback");
+        if (panel && (evt.fit_feedback || evt.quality_feedback)) {
+          panel.style.display = "";
+          var fitEl = document.getElementById(docType + "-fit-feedback");
+          var qualEl = document.getElementById(docType + "-quality-feedback");
+          var sysPromptEl = document.getElementById(docType + "-generation-system-prompt");
+          var userPromptEl = document.getElementById(docType + "-generation-user-prompt");
+          if (fitEl) fitEl.textContent = evt.fit_feedback || "";
+          if (qualEl) qualEl.textContent = evt.quality_feedback || "";
+          if (sysPromptEl) sysPromptEl.textContent = evt.generation_system_prompt || "";
+          if (userPromptEl) userPromptEl.textContent = evt.generation_user_prompt || "";
+        }
+        _setGenStatus(docType, "Critique complete", "success");
+      }
+
+      if (evt.node === "error") {
         _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
       }
     }

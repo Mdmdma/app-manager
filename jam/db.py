@@ -7,6 +7,9 @@ All database interactions go through this module.  Tables:
 - application_meta  extensible key-value metadata per application
 - documents         LaTeX documents (CVs / cover letters) per application
 - document_versions version history snapshots created on each compile
+- extra_questions   interview / application-form questions per application
+- interview_rounds  interview round tracking per application
+- offers            job offer details per application
 
 The database file lives at <project_root>/jam.db by default and can be
 overridden via the JAM_DB_PATH environment variable.
@@ -111,10 +114,11 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
     conn.executemany(
         "INSERT INTO providers (id, label, type, sort_order) VALUES (?,?,?,?)",
         [
-            ("openai",    "OpenAI",         "llm", 0),
-            ("anthropic", "Anthropic",      "llm", 1),
-            ("groq",      "Groq",           "llm", 2),
-            ("ollama",    "Ollama (local)",  "llm", 3),
+            ("openai",    "OpenAI",                "llm", 0),
+            ("anthropic", "Anthropic",             "llm", 1),
+            ("groq",      "Groq",                  "llm", 2),
+            ("ollama",    "Ollama (local)",         "llm", 3),
+            ("cliproxy",  "CLIProxy (Claude Max)",  "llm", 4),
         ],
     )
 
@@ -142,6 +146,10 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
             ("ollama:llama3.2", "ollama", "llama3.2", "Llama 3.2", "llm", None, None, None),
             ("ollama:mistral",  "ollama", "mistral",  "Mistral",   "llm", None, None, None),
             ("ollama:phi3",     "ollama", "phi3",     "Phi-3",     "llm", None, None, None),
+            # CLIProxy LLM (routes through CLIProxyAPI to Claude Max)
+            ("cliproxy:claude-opus-4-6",   "cliproxy", "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
+            ("cliproxy:claude-sonnet-4-6", "cliproxy", "claude-sonnet-4-6", "Claude Sonnet 4.6", "llm", 200000, None, None),
+            ("cliproxy:claude-haiku-4-5",  "cliproxy", "claude-haiku-4-5",  "Claude Haiku 4.5",  "llm", 200000, None, None),
         ],
     )
 
@@ -155,6 +163,7 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
             ("anthropic", "anthropic_api_key", "Anthropic API Key", "password", "sk-ant-...",              1, "llm", 0),
             ("groq",      "groq_api_key",      "Groq API Key",      "password", "gsk_...",                 1, "llm", 0),
             ("ollama",    "ollama_base_url",   "Ollama Base URL",   "url",      "http://localhost:11434",  1, "llm", 0),
+            ("cliproxy",  "cliproxy_base_url", "CLIProxy Base URL", "url",      "http://localhost:8317",   1, "llm", 0),
         ],
     )
 
@@ -287,6 +296,110 @@ def _migrate_applications_table(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE _applications_old")
 
 
+def _migrate_catalog_add_cliproxy(conn: sqlite3.Connection) -> None:
+    """Add the CLIProxy provider, models, and field to existing databases.
+
+    Uses INSERT OR IGNORE so this migration is idempotent — safe to run on
+    both fresh databases (where _seed_catalog already inserted the rows) and
+    on existing databases that were seeded before CLIProxy was added.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO providers (id, label, type, sort_order) VALUES (?,?,?,?)",
+        ("cliproxy", "CLIProxy (Claude Max)", "llm", 4),
+    )
+    conn.executemany(
+        """INSERT OR IGNORE INTO models
+           (id, provider_id, model_id, label, type, context_window, prompt_cost, completion_cost)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        [
+            ("cliproxy:claude-opus-4-6",   "cliproxy", "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
+            ("cliproxy:claude-sonnet-4-6", "cliproxy", "claude-sonnet-4-6", "Claude Sonnet 4.6", "llm", 200000, None, None),
+            ("cliproxy:claude-haiku-4-5",  "cliproxy", "claude-haiku-4-5",  "Claude Haiku 4.5",  "llm", 200000, None, None),
+        ],
+    )
+    exists = conn.execute(
+        "SELECT COUNT(*) FROM provider_fields WHERE provider_id = ? AND key = ?",
+        ("cliproxy", "cliproxy_base_url"),
+    ).fetchone()[0]
+    if not exists:
+        conn.execute(
+            """INSERT INTO provider_fields
+               (provider_id, key, label, input_type, placeholder, required, applies_to, sort_order)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            ("cliproxy", "cliproxy_base_url", "CLIProxy Base URL", "url", "http://localhost:8317", 1, "llm", 0),
+        )
+
+
+def _create_extra_questions_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS extra_questions (
+            id             TEXT PRIMARY KEY,
+            application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+            question       TEXT NOT NULL DEFAULT '',
+            answer         TEXT NOT NULL DEFAULT '',
+            word_cap       INTEGER,
+            sort_order     INTEGER NOT NULL DEFAULT 0,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _create_interview_rounds_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS interview_rounds (
+            id               TEXT PRIMARY KEY,
+            application_id   TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+            round_type       TEXT NOT NULL DEFAULT 'other',
+            round_number     INTEGER NOT NULL DEFAULT 1,
+            scheduled_at     TEXT,
+            completed_at     TEXT,
+            interviewer_names TEXT NOT NULL DEFAULT '',
+            location         TEXT NOT NULL DEFAULT '',
+            status           TEXT NOT NULL DEFAULT 'scheduled',
+            prep_notes       TEXT NOT NULL DEFAULT '',
+            debrief_notes    TEXT NOT NULL DEFAULT '',
+            questions_asked  TEXT NOT NULL DEFAULT '',
+            went_well        TEXT NOT NULL DEFAULT '',
+            to_improve       TEXT NOT NULL DEFAULT '',
+            confidence       INTEGER,
+            sort_order       INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _create_offers_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS offers (
+            id              TEXT PRIMARY KEY,
+            application_id  TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            base_salary     REAL,
+            currency        TEXT NOT NULL DEFAULT 'EUR',
+            bonus           TEXT NOT NULL DEFAULT '',
+            equity          TEXT NOT NULL DEFAULT '',
+            signing_bonus   TEXT NOT NULL DEFAULT '',
+            benefits        TEXT NOT NULL DEFAULT '',
+            pto_days        INTEGER,
+            remote_policy   TEXT NOT NULL DEFAULT '',
+            start_date      TEXT,
+            expiry_date     TEXT,
+            notes           TEXT NOT NULL DEFAULT '',
+            sort_order      INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 def init_db(db_path: Path | None = None) -> None:
@@ -295,9 +408,13 @@ def init_db(db_path: Path | None = None) -> None:
         _create_settings_table(conn)
         _create_catalog_tables(conn)
         _seed_catalog(conn)
+        _migrate_catalog_add_cliproxy(conn)
         _create_applications_tables(conn)
         _migrate_applications_table(conn)
         _create_documents_tables(conn)
+        _create_extra_questions_table(conn)
+        _create_interview_rounds_table(conn)
+        _create_offers_table(conn)
 
 
 # ── Settings CRUD ─────────────────────────────────────────────────────────────
@@ -477,6 +594,25 @@ def list_applications(db_path: Path | None = None) -> list[dict]:
             "SELECT * FROM applications ORDER BY created_at DESC"
         ).fetchall()
     return [_row_to_app(r) for r in rows]
+
+
+def list_applications_by_status(
+    status: str, db_path: Path | None = None
+) -> list[dict]:
+    """Return all applications with the given status, newest first."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM applications WHERE status = ? ORDER BY created_at DESC",
+            (status,),
+        ).fetchall()
+    return [_row_to_app(r) for r in rows]
+
+
+def count_applications(db_path: Path | None = None) -> int:
+    """Return the total number of applications."""
+    with _connect(db_path) as conn:
+        result = conn.execute("SELECT COUNT(*) as count FROM applications").fetchone()
+    return result["count"] if result else 0
 
 
 def update_application(
@@ -697,3 +833,282 @@ def get_version(version_id: str, db_path: Path | None = None) -> dict | None:
             "SELECT * FROM document_versions WHERE id = ?", (version_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Extra questions CRUD ─────────────────────────────────────────────────────
+
+def create_extra_question(
+    application_id: str,
+    question: str = "",
+    answer: str = "",
+    word_cap: int | None = None,
+    sort_order: int = 0,
+    db_path: Path | None = None,
+) -> dict:
+    """Insert a new extra question and return it as a dict."""
+    q_id = uuid.uuid4().hex
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO extra_questions
+                (id, application_id, question, answer, word_cap, sort_order,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (q_id, application_id, question, answer, word_cap, sort_order),
+        )
+        row = conn.execute(
+            "SELECT * FROM extra_questions WHERE id = ?", (q_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def list_extra_questions(
+    application_id: str, db_path: Path | None = None,
+) -> list[dict]:
+    """Return extra questions for an application, ordered by sort_order."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM extra_questions WHERE application_id = ? "
+            "ORDER BY sort_order ASC, created_at ASC",
+            (application_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_extra_question(
+    question_id: str, db_path: Path | None = None,
+) -> dict | None:
+    """Return a single extra question dict, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM extra_questions WHERE id = ?", (question_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_extra_question(
+    question_id: str, fields: dict, db_path: Path | None = None,
+) -> dict | None:
+    """Update an extra question's fields. Returns the updated dict, or None."""
+    if not fields:
+        return get_extra_question(question_id, db_path)
+    with _connect(db_path) as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [question_id]
+        conn.execute(
+            f"UPDATE extra_questions SET {set_clause}, updated_at = datetime('now') "
+            f"WHERE id = ?",
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM extra_questions WHERE id = ?", (question_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_extra_question(
+    question_id: str, db_path: Path | None = None,
+) -> bool:
+    """Delete an extra question. Returns True if a row was removed."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM extra_questions WHERE id = ?", (question_id,)
+        )
+    return cursor.rowcount > 0
+
+
+# ── Interview rounds CRUD ───────────────────────────────────────────────────
+
+def create_interview_round(
+    application_id: str,
+    round_type: str = "other",
+    round_number: int = 1,
+    scheduled_at: str | None = None,
+    completed_at: str | None = None,
+    interviewer_names: str = "",
+    location: str = "",
+    status: str = "scheduled",
+    prep_notes: str = "",
+    debrief_notes: str = "",
+    questions_asked: str = "",
+    went_well: str = "",
+    to_improve: str = "",
+    confidence: int | None = None,
+    sort_order: int = 0,
+    db_path: Path | None = None,
+) -> dict:
+    """Insert a new interview round and return it as a dict."""
+    r_id = uuid.uuid4().hex
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO interview_rounds
+                (id, application_id, round_type, round_number, scheduled_at,
+                 completed_at, interviewer_names, location, status, prep_notes,
+                 debrief_notes, questions_asked, went_well, to_improve,
+                 confidence, sort_order, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    datetime('now'), datetime('now'))
+            """,
+            (r_id, application_id, round_type, round_number, scheduled_at,
+             completed_at, interviewer_names, location, status, prep_notes,
+             debrief_notes, questions_asked, went_well, to_improve,
+             confidence, sort_order),
+        )
+        row = conn.execute(
+            "SELECT * FROM interview_rounds WHERE id = ?", (r_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def list_interview_rounds(
+    application_id: str, db_path: Path | None = None,
+) -> list[dict]:
+    """Return interview rounds for an application, ordered by sort_order."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM interview_rounds WHERE application_id = ? "
+            "ORDER BY sort_order ASC, created_at ASC",
+            (application_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_interview_round(
+    round_id: str, db_path: Path | None = None,
+) -> dict | None:
+    """Return a single interview round dict, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM interview_rounds WHERE id = ?", (round_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_interview_round(
+    round_id: str, fields: dict, db_path: Path | None = None,
+) -> dict | None:
+    """Update an interview round's fields. Returns the updated dict, or None."""
+    if not fields:
+        return get_interview_round(round_id, db_path)
+    with _connect(db_path) as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [round_id]
+        conn.execute(
+            f"UPDATE interview_rounds SET {set_clause}, updated_at = datetime('now') "
+            f"WHERE id = ?",
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM interview_rounds WHERE id = ?", (round_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_interview_round(
+    round_id: str, db_path: Path | None = None,
+) -> bool:
+    """Delete an interview round. Returns True if a row was removed."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM interview_rounds WHERE id = ?", (round_id,)
+        )
+    return cursor.rowcount > 0
+
+
+# ── Offers CRUD ─────────────────────────────────────────────────────────────
+
+def create_offer(
+    application_id: str,
+    status: str = "pending",
+    base_salary: float | None = None,
+    currency: str = "EUR",
+    bonus: str = "",
+    equity: str = "",
+    signing_bonus: str = "",
+    benefits: str = "",
+    pto_days: int | None = None,
+    remote_policy: str = "",
+    start_date: str | None = None,
+    expiry_date: str | None = None,
+    notes: str = "",
+    sort_order: int = 0,
+    db_path: Path | None = None,
+) -> dict:
+    """Insert a new offer and return it as a dict."""
+    o_id = uuid.uuid4().hex
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO offers
+                (id, application_id, status, base_salary, currency, bonus,
+                 equity, signing_bonus, benefits, pto_days, remote_policy,
+                 start_date, expiry_date, notes, sort_order,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    datetime('now'), datetime('now'))
+            """,
+            (o_id, application_id, status, base_salary, currency, bonus,
+             equity, signing_bonus, benefits, pto_days, remote_policy,
+             start_date, expiry_date, notes, sort_order),
+        )
+        row = conn.execute(
+            "SELECT * FROM offers WHERE id = ?", (o_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def list_offers(
+    application_id: str, db_path: Path | None = None,
+) -> list[dict]:
+    """Return offers for an application, ordered by sort_order."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM offers WHERE application_id = ? "
+            "ORDER BY sort_order ASC, created_at ASC",
+            (application_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_offer(
+    offer_id: str, db_path: Path | None = None,
+) -> dict | None:
+    """Return a single offer dict, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM offers WHERE id = ?", (offer_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_offer(
+    offer_id: str, fields: dict, db_path: Path | None = None,
+) -> dict | None:
+    """Update an offer's fields. Returns the updated dict, or None."""
+    if not fields:
+        return get_offer(offer_id, db_path)
+    with _connect(db_path) as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [offer_id]
+        conn.execute(
+            f"UPDATE offers SET {set_clause}, updated_at = datetime('now') "
+            f"WHERE id = ?",
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM offers WHERE id = ?", (offer_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_offer(
+    offer_id: str, db_path: Path | None = None,
+) -> bool:
+    """Delete an offer. Returns True if a row was removed."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM offers WHERE id = ?", (offer_id,)
+        )
+    return cursor.rowcount > 0

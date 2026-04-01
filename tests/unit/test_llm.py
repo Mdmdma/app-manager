@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from jam.config import Settings
-from jam.llm import _parse_json, extract_job_info, llm_call, _api_key_for, _get_ollama_url
+from jam.llm import _parse_json, extract_job_info, llm_call, _api_key_for, _get_ollama_url, _get_cliproxy_url
 
 
 # ── _parse_json ──────────────────────────────────────────────────────────────
@@ -270,3 +270,81 @@ async def test_extract_http_error_propagates():
 
         with pytest.raises(httpx.HTTPStatusError):
             await extract_job_info("text", settings)
+
+
+# ── _get_cliproxy_url ────────────────────────────────────────────────────────
+
+def test_cliproxy_url_default():
+    s = Settings()
+    assert _get_cliproxy_url(s) == "http://localhost:8317/v1/chat/completions"
+
+
+def test_cliproxy_url_trailing_slash():
+    s = Settings(cliproxy_base_url="http://myhost:9000/")
+    assert _get_cliproxy_url(s) == "http://myhost:9000/v1/chat/completions"
+
+
+# ── _api_key_for (cliproxy) ───────────────────────────────────────────────────
+
+def test_api_key_cliproxy():
+    s = Settings(llm_provider="cliproxy")
+    assert _api_key_for(s) == ""
+
+
+# ── llm_call (cliproxy) ───────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_llm_call_cliproxy_url_and_no_auth():
+    settings = Settings(
+        llm_provider="cliproxy",
+        cliproxy_base_url="http://localhost:8317",
+        llm_model="gpt-4o",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "cliproxy response"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings)
+
+    assert result == "cliproxy response"
+    call_args = instance.post.call_args
+    # Dispatched to the cliproxy endpoint
+    assert "localhost:8317" in call_args[0][0]
+    assert "/v1/chat/completions" in call_args[0][0]
+    # No Authorization header sent (empty api_key)
+    headers = call_args[1]["headers"]
+    assert "Authorization" not in headers
+
+
+@pytest.mark.asyncio
+async def test_llm_call_cliproxy_custom_base_url():
+    settings = Settings(
+        llm_provider="cliproxy",
+        cliproxy_base_url="http://proxy.internal:5000",
+        llm_model="some-model",
+    )
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.raise_for_status = lambda: None
+    mock_resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+
+    with patch("jam.llm.httpx.AsyncClient") as MockClient:
+        instance = AsyncMock()
+        instance.post.return_value = mock_resp
+        instance.__aenter__ = AsyncMock(return_value=instance)
+        instance.__aexit__ = AsyncMock(return_value=False)
+        MockClient.return_value = instance
+
+        result = await llm_call("sys", "usr", settings)
+
+    assert result == "ok"
+    call_args = instance.post.call_args
+    assert "proxy.internal:5000" in call_args[0][0]

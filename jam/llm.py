@@ -44,12 +44,18 @@ def _get_ollama_url(settings: Settings) -> str:
     return f"{base}/v1/chat/completions"
 
 
+def _get_cliproxy_url(settings: Settings) -> str:
+    base = settings.cliproxy_base_url.rstrip("/")
+    return f"{base}/v1/chat/completions"
+
+
 def _api_key_for(settings: Settings) -> str:
     keys = {
         "openai": settings.openai_api_key,
         "anthropic": settings.anthropic_api_key,
         "groq": settings.groq_api_key,
         "ollama": "ollama",
+        "cliproxy": "",
     }
     return keys.get(settings.llm_provider, "")
 
@@ -120,6 +126,10 @@ async def llm_call(system: str, user: str, settings: Settings | None = None) -> 
     elif provider == "ollama":
         return await _call_openai_compatible(
             _get_ollama_url(settings), api_key, model, system, user
+        )
+    elif provider == "cliproxy":
+        return await _call_openai_compatible(
+            _get_cliproxy_url(settings), api_key, model, system, user
         )
     else:
         url = _OPENAI_COMPATIBLE_URLS.get(provider, _OPENAI_COMPATIBLE_URLS["openai"])

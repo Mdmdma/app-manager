@@ -6,8 +6,11 @@ All communication with the knowledge base goes through this module.
 from __future__ import annotations
 
 import httpx
+import logging
 
 from jam.config import Settings
+
+logger = logging.getLogger(__name__)
 
 _JOB_APPS_NS = "job-applications"
 _JOB_APPS_LABEL = "Job Applications"
@@ -82,9 +85,10 @@ async def list_namespace_documents(
     settings = settings or Settings()
     base_url = settings.kb_api_url.rstrip("/")
     # Use a high top_k to capture all chunks across the namespaces.
-    # A neutral single-character query maximises coverage without biasing
-    # semantic ranking toward any particular topic.
-    body: dict = {"query": "a", "top_k": 100, "namespace_ids": namespace_ids}
+    # The KB API caps top_k at 100, so we must stay within that limit.
+    # A neutral single-space query minimises semantic bias without preferring
+    # any particular topic or character.
+    body: dict = {"query": " ", "top_k": 100, "namespace_ids": namespace_ids}
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(f"{base_url}/search", json=body)
@@ -92,7 +96,8 @@ async def list_namespace_documents(
                 return []
             resp.raise_for_status()
             data = resp.json()
-    except Exception:
+    except Exception as exc:
+        logger.warning("list_namespace_documents failed for %s: %s", namespace_ids, exc)
         return []
 
     raw: list[dict] = data if isinstance(data, list) else data.get("results", [])

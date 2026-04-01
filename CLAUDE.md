@@ -96,31 +96,56 @@ uv run pytest --cov=jam --cov-report=term-missing
 - **Test migrations with existing data** — unit tests for schema migrations should
   seed data first, run the migration, and assert data is preserved.
 
-## Agents, skills, and knowledge files
+## Delegation protocol
 
-### Orchestrator routing
+**Every edit to `jam/*.py` MUST go through the module agent that owns the file.**
+Do not edit these files directly from the orchestrator — even for single-line
+changes. This is the single most important rule for token efficiency and
+consistency. Agents read compact knowledge files instead of full source, run
+scoped tests, and report cross-module needs back to you.
 
-When a task arrives, identify which modules are affected and delegate to the
-appropriate domain agent. Modify leaves first, then dependents.
+### Routing table
+
+| Task touches | Delegate to | `subagent_type` |
+|---|---|---|
+| Settings, env vars (`config.py`) | config-agent | `config-agent` |
+| API endpoints, Pydantic models (`server.py`) | server-api-agent | `server-api-agent` |
+| Web UI, HTML/CSS/JS (`html_page.py`) | ui-agent | `ui-agent` |
+| Database, schema, migrations (`db.py`) | db-agent | `db-agent` |
+| Generation pipeline, LangGraph (`generation.py`) | generation-agent | `generation-agent` |
+| LLM, KB client, Gmail client | clients-agent | `clients-agent` |
 
 **Module dependency order** (modify in this order):
-`config` -> `server` (html_page is a leaf, server depends on config)
+`config` -> `{clients, db}` -> `generation` -> `server` (html_page is a leaf)
 
-**Domain routing table**:
+### Responsibility split
 
-| Task touches | Delegate to |
+| Responsibility | Who does it |
 |---|---|
-| Settings | `config-agent` |
-| Endpoints, web UI | `server-domain-agent` |
+| Read knowledge file, edit source, edit tests, run scoped tests | **Agent** |
+| Run `/update-knowledge` after agent completes | **Orchestrator** |
+| Run `/test` for final validation | **Orchestrator** |
+| Route **Needs attention** items to sibling agents | **Orchestrator** |
 
-**Mandatory delegation rule**: NEVER edit `jam/*.py` files directly from the
-orchestrator. Always delegate to the appropriate agent.
+Agents do NOT have the Skill tool. Never instruct them to run `/test` or
+`/update-knowledge` — they cannot. The orchestrator handles all skill
+invocations after agents return.
 
-### Domain agents (`.claude/agents/`)
+### Cross-module workflow
 
-| Agent file | Coordinates | Module agents |
-|---|---|---|
-| `server-domain-agent.md` | server endpoints, UI, config | config-agent, server-api-agent, ui-agent |
+When a task spans multiple modules:
+
+1. Identify all affected modules from the routing table.
+2. Launch agents in dependency order (or in parallel when independent).
+3. When an agent returns a **Needs attention** block, route each item to the
+   named sibling agent with full context from the first agent's response.
+4. After all agents complete, run `/update-knowledge` for each changed module.
+5. Run `/test` once at the end.
+
+Agents cannot spawn other agents. All cross-module coordination flows through
+the orchestrator using the **Needs attention** pattern.
+
+## Knowledge files and skills
 
 ### Module agents (`.claude/agents/`)
 
@@ -129,6 +154,9 @@ orchestrator. Always delegate to the appropriate agent.
 | `config-agent.md` | `jam/config.py` | `.claude/knowledge/config.md` |
 | `server-api-agent.md` | `jam/server.py` | `.claude/knowledge/server-api.md` |
 | `ui-agent.md` | `jam/html_page.py` | `.claude/knowledge/server-ui.md` |
+| `db-agent.md` | `jam/db.py` | `.claude/knowledge/db.md` |
+| `generation-agent.md` | `jam/generation.py` | `.claude/knowledge/generation.md` |
+| `clients-agent.md` | `jam/llm.py`, `jam/kb_client.py`, `jam/gmail_client.py` | `.claude/knowledge/clients.md` |
 
 ### Knowledge files (`.claude/knowledge/`)
 
@@ -142,11 +170,14 @@ comment for staleness detection.
 | `config.md` | `jam/config.py` — Settings fields, env vars, defaults |
 | `server-api.md` | `jam/server.py` — All FastAPI endpoints, Pydantic models |
 | `server-ui.md` | `jam/html_page.py` — Web UI structure, JS state machine |
+| `db.md` | `jam/db.py` — Tables, CRUD functions, migrations |
+| `generation.md` | `jam/generation.py` — LangGraph nodes, state, compile loop |
+| `clients.md` | `jam/llm.py`, `jam/kb_client.py`, `jam/gmail_client.py` — External service clients |
 | `chrome-extension.md` | `extensions/chrome/` — Chrome extension architecture, states, API contract |
 
-**Self-update rule**: After modifying any source file, run `/update-knowledge <module>`
-to regenerate its knowledge file before finishing the task. The `chrome-extension`
-knowledge file is static (no generated hash) — update it manually after editing
+**Knowledge update rule**: The orchestrator runs `/update-knowledge <module>`
+after each agent completes its work. Agents do not run this themselves. The
+`chrome-extension` knowledge file is static — update it manually after editing
 extension files.
 
 ### Skills (`.claude/commands/`)

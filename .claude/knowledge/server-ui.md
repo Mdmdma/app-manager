@@ -1,7 +1,7 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: a2ae98762fff -->
-<!-- updated: 2026-03-28 -->
+<!-- hash: 8bd44ebe6844 -->
+<!-- updated: 2026-03-31 -->
 
 ## Public API
 
@@ -20,8 +20,8 @@
 
 ### Tabs / Views
 - Dashboard: stats row (Total, Active, Interviews, Offers) + actions bar + applications grid
-- Settings: General, Connection, Knowledge Base, AI Models, Templates, Email / Gmail sections via sidebar
-- Detail: multi-step navigation (App Details, CV & Cover Letters, Extra Questions, Interview rounds, Offer)
+- Settings: Personal Info (default active), General, Connection, Knowledge Base, AI Models, Templates, System Prompts, Email / Gmail sections via sidebar
+- Detail: multi-step navigation (App Details, CV & Cover Letters, Extra Questions, Interviews, Offers)
 
 ### Actions Bar (`div.actions-bar`)
 - URL import form: `#import-url` input, `#import-btn` button, `#import-status` span
@@ -31,6 +31,40 @@
 Two side-by-side indicators in `.header-actions`:
 - `#jam-status` / `#jam-dot` / `#jam-status-text` — jam server status
 - `#kb-status` / `#kb-dot` / `#kb-status-text` — kb knowledge base status
+
+### Personal Info Settings Section (`#section-personal-info`)
+Default active settings tab. Five input fields for PDF metadata:
+- `#personal-full-name` (text) — user's full name (used as PDF author)
+- `#personal-email` (email)
+- `#personal-phone` (tel)
+- `#personal-website` (url)
+- `#personal-address` (text)
+- Profile Photo: file input → opens circular crop modal → stores cropped PNG data URI in `_stored.personal_photo`; preview displays as 120×120 circle (`border-radius: 50%`)
+- Signature: file input → opens rectangle crop modal → stores cropped PNG data URI in `_stored.personal_signature`; preview max 250×80
+- Save button calls `savePersonalInfo()`
+- Status: `#personal-info-msg`
+
+### Crop Modal (Profile Photo)
+Lazy-built modal (`#crop-modal-overlay`, `.crop-modal-overlay`) for circular cropping of the profile photo. IIFE-scoped; exposes three window functions:
+- `openCropModal(dataUri, previewId, settingKey)` — builds modal DOM on first call, loads image into `#crop-container`, creates overlay canvas sized to displayed image, initialises circle to largest inscribed circle
+- `closeCropModal()` — hides modal, removes listeners, disconnects ResizeObserver, resets file input
+- `applyCrop()` — scales circle from display to natural image coords, draws circular-clipped region to offscreen canvas, exports as PNG data URI with transparency outside circle, updates `_stored` and preview
+Interaction:
+- Drag inside circle → move; drag handle (indigo square at 45° on perimeter) → resize; scroll wheel → resize
+- Circle clamped to image bounds, minimum radius 25px
+- Dark semi-transparent overlay outside circle; indigo (#4f46e5) circle border
+CSS classes: `.crop-modal-overlay`, `.crop-modal`, `.crop-container`, `.crop-overlay-canvas`, `.crop-modal-title`, `.crop-modal-hint`, `.crop-modal-footer`
+
+### Rectangle Crop Modal (Signature)
+Lazy-built modal (`#rect-crop-modal-overlay`, `.rect-crop-modal-overlay`) for rectangular cropping of the signature. IIFE-scoped; exposes three window functions:
+- `openRectCropModal(dataUri, previewId, settingKey)` — builds modal DOM on first call, loads image, creates overlay canvas, initialises rectangle to 3:1 wide aspect ratio centred on image
+- `closeRectCropModal()` — hides modal, removes listeners, disconnects ResizeObserver, resets file input
+- `applyRectCrop()` — scales rectangle from display to natural image coords, draws region to offscreen canvas, exports as PNG data URI, updates `_stored` and preview
+Interaction:
+- Drag inside rectangle → move; drag any of 8 corner/edge handles → resize
+- Rectangle clamped to image bounds, minimum 50px wide / 20px tall
+- Dark semi-transparent overlay outside rectangle; indigo (#4f46e5) rectangle border
+CSS classes: `.rect-crop-modal-overlay`, `.rect-crop-modal`, `.rect-crop-container`, `.rect-crop-overlay-canvas`, `.rect-crop-modal-title`, `.rect-crop-modal-hint`, `.rect-crop-modal-footer`
 
 ### Connection Settings Section (`#section-connection`)
 Three rows:
@@ -51,7 +85,7 @@ Four setting groups:
 Full tri-split LaTeX editor with two document types (CV, Cover Letter):
 - Tab bar (`.tab-bar`) with `.tab-btn-doc` buttons switching between `doc-panel-cv` and `doc-panel-cover_letter`
 - Each panel has:
-  - `.doc-list-bar`: document selector (`<select>`), New/Save/Compile/Delete buttons, status span
+  - `.doc-list-bar`: document selector (`<select>`), New/Save/Compile/Generate/Delete/Rename buttons, status span
   - `.trisplit-container` with three panes:
     - Pane 0 (25%): Instructions panel (`#<type>-instructions-panel`) — structured per-section instruction fields with debounced auto-save
     - Pane 1 (37.5%): LaTeX source — CodeMirror 5 editor (`#<type>-latex-editor` textarea, upgraded via `_initCmEditors()`)
@@ -76,6 +110,19 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - Each non-global field has a "restrict edits" toggle (checkbox)
 - State serialised to JSON via `_getInstructionsAsJson()` and stored in `prompt_text` field
 
+### System Prompts Settings Section (`#section-prompts`)
+Six textareas for editing the system prompts used by the agentic generation pipeline:
+- `#prompt-generate-first` — first-time generation prompt
+- `#prompt-generate-revise` — revision prompt
+- `#prompt-analyze-fit` — fit analysis prompt
+- `#prompt-analyze-quality` — quality review prompt
+- `#prompt-apply-suggestions` — apply suggestions prompt
+- `#prompt-reduce-size` — reduce size prompt
+Each has a "Reset to default" button calling `resetPrompt(key)`.
+- Defaults loaded via `GET /prompts/defaults` and cached in `_promptDefaults`
+- Save button calls `savePromptSettings()` — only saves values differing from defaults
+- Status: `#prompt-settings-msg`
+
 ### CSS Classes (from shared design system)
 - Buttons: `.btn`, `.btn-primary`, `.btn-secondary`, `.btn-danger`, `.btn-sm`, `.btn-green`
 - Badges: `.badge`, `.badge-applied`, `.badge-screening`, `.badge-interviewing`, `.badge-offered`, `.badge-rejected`, `.badge-accepted`, `.badge-withdrawn`
@@ -87,9 +134,11 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - Document editor: `.tab-bar`, `.tab-btn-doc`, `.doc-tab-panel`, `.trisplit-container`, `.trisplit-pane`, `.trisplit-pane-header`, `.trisplit-pane-body`, `.doc-list-bar`, `.doc-preview-frame`, `.doc-version-bar`, `.doc-compile-status`
 - Instructions panel: `.instructions-panel`, `.instruction-field`, `.instruction-field.global`, `.instruction-field-header`, `.instruction-field-title`, `.instruction-toggle-wrap`, `.instruction-toggle-label`, `.instruction-toggle`, `.instruction-toggle-slider`, `.instruction-textarea`
 - PDF viewer: `.pdf-placeholder` (centered message div), `.pdf-canvas-page` (per-page canvas element)
+- Crop modal (circle): `.crop-modal-overlay`, `.crop-modal`, `.crop-container`, `.crop-overlay-canvas`, `.crop-modal-title`, `.crop-modal-hint`, `.crop-modal-footer`
+- Crop modal (rect): `.rect-crop-modal-overlay`, `.rect-crop-modal`, `.rect-crop-container`, `.rect-crop-overlay-canvas`, `.rect-crop-modal-title`, `.rect-crop-modal-hint`, `.rect-crop-modal-footer`
 
 ### JS Helpers
-- `apiFetch(method, url, body)` — central API wrapper (prepends `/api/v1`)
+- `apiFetch(method, url, body)` — central API wrapper (prepends `/api/v1`); always sets `cache: "no-store"` to prevent stale browser caching
 - `loadApplications()` — fetches `GET /applications`, calls `renderApplications()` + `updateStats()`
 - `renderApplications()` — populates `#applications-container` with grid or empty state
 - `updateStats()` — updates `#stat-total/active/interviewing/offers`
@@ -108,10 +157,16 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - `onProviderChange()` — updates model dropdown and credential fields on provider change
 - `renderCredentialFields(prov)` — builds credential input fields with show/hide toggle
 - `saveAiSettings()` — POST `/settings` with current AI config
-- `loadKbSettings()` — GET `/kb/namespaces` + reads `_stored`, populates namespace checkboxes and numeric fields
+- `loadKbSettings()` — reads `_stored` and sets numeric fields (`#kb-n-results`, `#kb-padding`) synchronously first, then fetches GET `/kb/namespaces` and renders namespace checkboxes; `parseInt(x) || default` replaced with null-check + isNaN guard to handle value `0` correctly
 - `saveKbSettings()` — collects checked namespaces and numeric values, POST `/settings`
 - `loadTemplateSettings()` — populates template textareas from `_stored` or defaults
 - `saveTemplateSettings()` — POST `/settings` with template values
+- `loadPromptDefaults()` — GET `/prompts/defaults`, caches in `_promptDefaults`
+- `loadPromptSettings()` — populates 6 prompt textareas from `_stored` or defaults
+- `savePromptSettings()` — POST `/settings` with prompt values (only saves values that differ from defaults)
+- `resetPrompt(key)` — resets a single prompt textarea to its default value
+- `loadPersonalInfo()` — reads from `_stored` to populate personal info fields (called after `loadAiSettings` in `switchToSettings`)
+- `savePersonalInfo()` — POST `/settings` with 5 personal info fields, updates `_stored` via `Object.assign`
 - `loadGmailSettings()` — GET `/gmail/status` + GET `/settings`, populates Gmail fields
 - `saveGmailCredentials()` — POST `/settings` with Gmail OAuth credentials
 - `connectGmail()` — GET `/gmail/auth-url`, opens auth URL in new window
@@ -121,11 +176,12 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - `_switchDocTab(docType)` — switches between cv/cover_letter document tabs
 - `_loadDocuments(docType)` — GET `/applications/:id/documents?doc_type=<type>`, populates selector
 - `_clearEditor(docType)` — calls `_buildInstructionsFromLatex(docType, '')`, clears latex editor (`setValue("")`) and sets preview div to "No document selected" placeholder
-- `_loadDocIntoEditor(docType, doc)` — calls `_buildInstructionsFromLatex` + `_setInstructionsFromJson`, fills latex editor via `setValue(doc.latex_source)`, sets preview div placeholder (no auto-compile)
+- `_loadDocIntoEditor(docType, doc)` — calls `_buildInstructionsFromLatex` + `_setInstructionsFromJson`, fills latex editor via `setValue(doc.latex_source)`, tries to load cached PDF via `HEAD /documents/:id/pdf` (shows preview if available, falls back to placeholder)
 - `_onDocSelect(docType)` — handles select change, loads selected doc into editor
-- `_createDoc(docType)` — POST `/applications/:id/documents`, inserts into list
+- `_createDoc(docType)` — prompts user for document name, POST `/applications/:id/documents`, inserts into list
 - `_saveCurrentDoc(docType)` — PUT `/documents/:id` with current editor content; reads latex via `_cmEditors[docType].getValue()`; reads `prompt_text` via `_getInstructionsAsJson(docType)`
 - `_deleteCurrentDoc(docType)` — DELETE `/documents/:id` with confirmation
+- `_renameCurrentDoc(docType)` — prompts user for new name, PUT `/documents/:id` with `{title}`, updates dropdown option text
 - `_onLatexInput(docType)` — debounces `_saveCurrentDoc` on CodeMirror change (2000ms auto-save); wired via `cm.on('change', ...)`
 - `_scheduleInstructionSave(docType)` — debounces `_saveCurrentDoc` on instruction field changes (2000ms auto-save); called from `oninput` on instruction textareas and `onchange` on toggle checkboxes
 - `_initCmEditors()` — initialises CodeMirror 5 on both latex textareas; stores instances in `_cmEditors`; called at page init
@@ -134,15 +190,22 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - `_getInstructionsAsJson(docType)` — serialises panel state to JSON string `{general, sections:[{key,label,text,enabled}]}`; returns `""` if panel is empty
 - `_setInstructionsFromJson(docType, jsonStr)` — populates existing fields from JSON string; handles invalid JSON gracefully (no crash)
 - `_renderPdf(docType, url)` — async; renders PDF via PDF.js into `#<type>-preview-frame` div, one canvas per page; shows "Loading PDF…" then replaces with canvases or "Failed to load PDF" on error
-- `_compileDoc(docType)` — saves doc (reads latex via `getValue()`, instructions via `_getInstructionsAsJson`), POST `/documents/:id/compile`, calls `_renderPdf` with cache-busting URL
+- `_compileDoc(docType)` — saves doc (reads latex via `getValue()`, instructions via `_getInstructionsAsJson`), POST `/documents/:id/compile`, calls `_renderPdf` with cache-busting URL (does not create a version)
 - `_loadVersions(docType)` — GET `/documents/:id/versions`, renders version buttons
 - `_restoreVersion(docType, version)` — restores latex source via `setValue(version.latex_source)`, rebuilds instruction panel from latex, populates from version prompt_text JSON, and saves (no auto-compile)
 - `_setDocStatus(docType, msg, cls)` — updates status span; clears after 3s on success
 - `_togglePane(containerId, paneIndex)` — collapses/expands a trisplit pane
+- `openCropModal(dataUri, previewId, settingKey)` — opens circular crop modal for profile photo
+- `closeCropModal()` — closes crop modal, cleans up listeners
+- `applyCrop()` — exports circular-cropped PNG and updates preview/stored
+- `openRectCropModal(dataUri, previewId, settingKey)` — opens rectangle crop modal for signature
+- `closeRectCropModal()` — closes rectangle crop modal, cleans up listeners
+- `applyRectCrop()` — exports rectangular-cropped PNG and updates preview/stored
 
 ### Auto-save / Compile behaviour
 - **Auto-save**: CodeMirror `change` event triggers `_onLatexInput` → debounces `_saveCurrentDoc` (2000ms). Instruction textarea and toggle changes trigger `_saveCurrentDoc` via `_scheduleInstructionSave` (same 2-second debounce, shared `_saveTimers`). This persists edits to the DB without compilation.
-- **Compile**: Explicit action via the "Compile" button or `Ctrl-Enter` inside the CodeMirror editor. Saves first (reads instructions via `_getInstructionsAsJson`), then compiles via backend, creates a version checkpoint. No auto-compile on load or typing.
+- **Compile**: Explicit action via the "Compile" button or `Ctrl-Enter` inside the CodeMirror editor. Saves first (reads instructions via `_getInstructionsAsJson`), then compiles via backend. Does NOT create a version — versions are only created on Generate. No auto-compile on load or typing.
+- **Document switching**: When switching documents via the dropdown, `_loadDocIntoEditor` tries a `HEAD` request to the PDF endpoint. If a cached PDF exists, it renders immediately; otherwise shows a placeholder.
 - **Version restore**: Rebuilds instruction panel from version LaTeX, populates from version prompt_text, saves.
 - **prompt_text storage format**: JSON string `{"general":"...","sections":[{"key":"...","label":"...","text":"...","enabled":true},...]}`. Old plain-text values fail JSON parse and are treated as empty (backward-compatible).
 
@@ -177,7 +240,7 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 - Tested indirectly via `test_server.py` (checks HTML content in response)
 
 ## Known Limitations
-- Settings view sections (General, Connection) are read-only displays
+- Settings view sections (General, Connection) are read-only displays; Personal Info is editable
 - Stats are computed client-side from the full applications list
 - Import status message persists until next import attempt (not auto-cleared)
 - LaTeX compilation requires backend `/documents/:id/compile` endpoint
