@@ -1307,6 +1307,35 @@ HTML_PAGE = """<!DOCTYPE html>
     transition: border-color 0.15s;
   }
   .eq-card-body textarea:focus { border-color: #a5b4fc; }
+  /* Interview card textareas: scrollable + user-resizable */
+  .eq-card-body textarea.iv-prep_notes,
+  .eq-card-body textarea.iv-questions_asked,
+  .eq-card-body textarea.iv-went_well,
+  .eq-card-body textarea.iv-to_improve,
+  .eq-card-body textarea.iv-debrief_notes,
+  .eq-card-body textarea.iv-links {
+    min-height: 80px;
+    max-height: 300px;
+    overflow-y: auto;
+    resize: vertical;
+  }
+
+  /* ── Interview sync badge ── */
+  .iv-sync-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 99px;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+  .iv-sync-ok {
+    background: #d1fae5;
+    color: #065f46;
+  }
 
   /* ── Document editor specific ── */
   .doc-list-bar {
@@ -1575,6 +1604,293 @@ HTML_PAGE = """<!DOCTYPE html>
     flex-shrink: 0;
   }
   .trisplit-fs-btn:hover { background: #e5e7eb; }
+
+  /* ── Prep Guide Section ── */
+  .prep-guide-section {
+    margin-top: 20px;
+    border-top: 1px solid #e5e7eb;
+    padding-top: 16px;
+  }
+  .prep-guide-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .prep-guide-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    flex: 1;
+    min-width: 100px;
+  }
+  .prep-guide-last-gen {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+  .prep-guide-error {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 0.82rem;
+    color: #dc2626;
+    margin-bottom: 10px;
+    display: none;
+  }
+  .prep-guide-progress {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    margin-bottom: 10px;
+    overflow-x: auto;
+  }
+  .prep-guide-progress[hidden] { display: none; }
+  .prep-guide-body {
+    min-height: 60px;
+  }
+  .prep-guide-empty {
+    font-size: 0.85rem;
+    color: #9ca3af;
+    padding: 16px 0;
+    text-align: center;
+  }
+  .prep-guide-markdown {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: #1a1a2e;
+  }
+  .prep-guide-markdown h1,
+  .prep-guide-markdown h2,
+  .prep-guide-markdown h3,
+  .prep-guide-markdown h4,
+  .prep-guide-markdown h5,
+  .prep-guide-markdown h6 {
+    margin: 14px 0 6px;
+    color: #16213e;
+    font-weight: 600;
+  }
+  .prep-guide-markdown h1 { font-size: 1.2rem; }
+  .prep-guide-markdown h2 { font-size: 1.05rem; }
+  .prep-guide-markdown h3 { font-size: 0.95rem; }
+  .prep-guide-markdown h4,
+  .prep-guide-markdown h5,
+  .prep-guide-markdown h6 { font-size: 0.875rem; }
+  .prep-guide-markdown p { margin: 6px 0; }
+  .prep-guide-markdown ul,
+  .prep-guide-markdown ol {
+    margin: 6px 0;
+    padding-left: 20px;
+  }
+  .prep-guide-markdown li { margin: 3px 0; }
+  .prep-guide-markdown code {
+    background: #f3f4f6;
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.82rem;
+    font-family: monospace;
+  }
+  .prep-guide-markdown pre {
+    background: #f3f4f6;
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 8px 0;
+  }
+  .prep-guide-markdown pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+  }
+  .prep-guide-markdown a {
+    color: #4f46e5;
+    text-decoration: underline;
+  }
+  .prep-guide-markdown a:hover { color: #4338ca; }
+  .prep-guide-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 200px;
+    max-height: 600px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background: #fff;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.15s;
+  }
+  .prep-guide-textarea:focus { border-color: #a5b4fc; }
+  .prep-guide-saved-msg {
+    font-size: 0.75rem;
+    color: #059669;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .prep-guide-saved-msg.visible { opacity: 1; }
+  /* Collapsibles inside prep-guide */
+  .prep-guide-collapsibles {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .prep-guide-collapsible {
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .prep-guide-collapsible summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: #f9fafb;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #374151;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    outline: none;
+  }
+  .prep-guide-collapsible summary::-webkit-details-marker { display: none; }
+  .prep-guide-collapsible summary::before {
+    content: "\\25B6";
+    font-size: 0.6rem;
+    color: #9ca3af;
+    transition: transform 0.15s;
+    flex-shrink: 0;
+  }
+  .prep-guide-collapsible[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .prep-guide-collapsible-body {
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #374151;
+  }
+  .prep-guide-collapsible-body pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f3f4f6;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    margin: 0;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .prep-guide-collapsible-body ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .prep-guide-collapsible-body li {
+    margin: 4px 0;
+  }
+  .prep-guide-collapsible-body a {
+    color: #4f46e5;
+    text-decoration: underline;
+  }
+  /* Flashcard component */
+  .flashcard-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .flashcard {
+    perspective: 800px;
+    cursor: pointer;
+    min-height: 64px;
+  }
+  .flashcard-inner {
+    position: relative;
+    width: 100%;
+    min-height: 64px;
+    transform-style: preserve-3d;
+    transition: transform 0.35s;
+  }
+  .flashcard.flipped .flashcard-inner {
+    transform: rotateY(180deg);
+  }
+  .flashcard-face {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    min-height: 64px;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  .flashcard-face.front {
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    color: #1a1a2e;
+  }
+  .flashcard-face.back {
+    background: #d1fae5;
+    border: 1px solid #6ee7b7;
+    color: #1a1a2e;
+    transform: rotateY(180deg);
+  }
+  .flashcard-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .flashcard-face.front .flashcard-label {
+    background: #4f46e5;
+    color: #fff;
+  }
+  .flashcard-face.back .flashcard-label {
+    background: #059669;
+    color: #fff;
+  }
+  .flashcard:hover .flashcard-face.front {
+    box-shadow: 0 2px 8px rgba(79,70,229,0.12);
+  }
+  .flashcard:hover .flashcard-face.back {
+    box-shadow: 0 2px 8px rgba(5,150,105,0.12);
+  }
+  /* Spacer for the absolute-positioned back face so the card has height */
+  .flashcard-height-spacer {
+    visibility: hidden;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    pointer-events: none;
+  }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
@@ -1687,6 +2003,11 @@ HTML_PAGE = """<!DOCTYPE html>
           <li>
             <button class="sidebar-menu-btn" data-section="gmail" onclick="switchSettingsSection('gmail')">
               Email / Gmail
+            </button>
+          </li>
+          <li>
+            <button class="sidebar-menu-btn" data-section="ms-graph" onclick="switchSettingsSection('ms-graph')">
+              Outlook Calendar
             </button>
           </li>
         </ul>
@@ -1845,6 +2166,16 @@ HTML_PAGE = """<!DOCTYPE html>
 
           <div id="ai-credentials"></div>
 
+          <div class="setting-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.9rem; font-weight:500; color:#1a1a2e;">
+              <input type="checkbox" id="search-enrichment-toggle" aria-label="Enrich ingestion with web search (Claude only)" />
+              <span>Enrich ingestion with web search (Claude only)</span>
+            </label>
+            <p style="color:#6b7280; font-size:0.8rem; margin-top:4px;">
+              Lets Claude look up salary grades and public-sector pay scales during JD extraction. Only active when the provider is Anthropic or CLIProxy.
+            </p>
+          </div>
+
           <details class="step-models-details" style="margin-top:var(--space-4)">
             <summary style="cursor:pointer; font-weight:600; color:var(--text-secondary); font-size:0.92em; user-select:none; padding:4px 0;">
               Per-Step Model Overrides
@@ -1992,6 +2323,27 @@ HTML_PAGE = """<!DOCTYPE html>
             <button id="gmail-disconnect-btn" class="btn btn-secondary" onclick="disconnectGmail()" style="display:none;">Disconnect</button>
           </div>
         </div>
+
+        <!-- Outlook Calendar (Microsoft Graph) Settings Section -->
+        <div id="section-ms-graph" class="settings-section">
+          <h2>Outlook Calendar</h2>
+          <p style="color:#6b7280; margin-bottom:16px;">Connect your Microsoft account to sync interview rounds to your Outlook calendar.</p>
+
+          <div class="setting-group">
+            <label class="setting-group-label">Status</label>
+            <div class="setting-value" style="display:flex; align-items:center; gap:8px;">
+              <span class="connection-dot disconnected" id="ms-graph-status-dot" style="display:inline-block;"></span>
+              <span id="ms-graph-status-text">Not connected</span>
+            </div>
+          </div>
+
+          <div id="ms-graph-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:16px;">
+            <button id="ms-graph-connect-btn" class="btn btn-primary" onclick="_msGraphConnect()">Connect Outlook</button>
+            <button id="ms-graph-disconnect-btn" class="btn btn-secondary" onclick="_msGraphDisconnect()" style="display:none;">Disconnect</button>
+            <button id="ms-graph-sync-btn" class="btn btn-secondary" onclick="_msGraphSyncAll()" style="display:none;">Sync all</button>
+          </div>
+        </div>
       </div>
     </div>
   </main>
@@ -2096,6 +2448,48 @@ HTML_PAGE = """<!DOCTYPE html>
           <div id="detail-full-text-section" style="display:none;margin-top:32px;border-top:1px solid #e5e7eb;padding-top:24px;">
             <h3 style="font-size:1rem;font-weight:700;color:#16213e;margin-bottom:12px;">Full Extracted Text</h3>
             <pre id="detail-full-text" style="white-space:pre-wrap;word-break:break-word;font-size:0.8rem;color:#4b5563;background:#f9fafb;padding:16px;border-radius:10px;border:1px solid #e5e7eb;max-height:400px;overflow-y:auto;font-family:inherit;margin:0;"></pre>
+          </div>
+
+          <!-- Rejection panel (shown when a rejection is recorded) -->
+          <div id="rejection-panel" style="display:none;margin-top:32px;border-top:2px solid #fee2e2;padding-top:24px;">
+            <div class="section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+              <h3 style="margin:0;font-size:1rem;font-weight:700;color:#dc2626;">Outcome &#x2014; Rejection</h3>
+              <button class="btn btn-danger btn-sm" onclick="_rjDelete()" aria-label="Delete rejection record" title="Delete rejection record">&#x1F5D1; Delete</button>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Summary</label>
+              <textarea class="field-input rj-summary" rows="3" oninput="_rjScheduleSave(this)" placeholder="Brief summary of the rejection..."></textarea>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Reasons for Rejection</label>
+              <textarea class="field-input rj-reasons" rows="3" oninput="_rjScheduleSave(this)" placeholder="Reasons given or inferred..."></textarea>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Links</label>
+              <div class="rj-links-preview" style="margin-bottom:6px;font-size:0.85rem;line-height:1.6;"></div>
+              <textarea class="field-input rj-links" rows="3" oninput="_rjScheduleSave(this);_rjUpdateLinksPreview(this)" placeholder="One URL per line..."></textarea>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Received</label>
+              <input type="date" class="field-input rj-received_at" onchange="_rjScheduleSave(this)" />
+            </div>
+            <div class="form-group">
+              <label class="field-label">Follow-up Status</label>
+              <select class="field-input rj-followup_status" onchange="_rjScheduleSave(this)">
+                <option value="none">None</option>
+                <option value="contacted">Contacted</option>
+                <option value="responded">Responded</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="field-label">Follow-up Notes</label>
+              <textarea class="field-input rj-followup_notes" rows="3" oninput="_rjScheduleSave(this)" placeholder="Notes on follow-up communications..."></textarea>
+            </div>
+            <details style="margin-top:12px;">
+              <summary class="field-label" style="cursor:pointer;">Original Email</summary>
+              <textarea class="field-input rj-raw_email" rows="8" readonly style="margin-top:8px;font-family:monospace;font-size:12px;resize:vertical;background:#f9fafb;"></textarea>
+            </details>
           </div>
         </div>
 
@@ -2223,7 +2617,10 @@ HTML_PAGE = """<!DOCTYPE html>
         <div id="step-interviews" class="detail-step">
           <div class="section-header-row" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
             <h2 style="margin:0;">Interviews</h2>
-            <button class="btn btn-primary btn-sm" onclick="_ivAdd()">+ Add Round</button>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="openEmailIngestModal()" aria-label="Import interview from email">+ From Email</button>
+              <button class="btn btn-primary btn-sm" onclick="_ivAdd()">+ Add Round</button>
+            </div>
           </div>
           <p id="iv-empty" class="placeholder-text">No interview rounds yet</p>
           <div id="iv-list"></div>
@@ -2253,6 +2650,12 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <form id="app-form" onsubmit="handleApplicationFormSubmit(event)">
       <div class="modal-body">
+        <div class="form-group" id="form-jd-group">
+          <label class="field-label" for="form-jd-text">Paste Job Description</label>
+          <p style="margin:0 0 6px;font-size:12px;color:#6b7280;">Paste the JD and we&#x2019;ll auto-fill from it &#x2014; or fill the fields manually below.</p>
+          <textarea id="form-jd-text" class="field-input" rows="6" placeholder="Paste the full job description here&#x2026;" style="resize:vertical;min-height:100px;" oninput="_syncJdRequiredFields()"></textarea>
+        </div>
+
         <div class="form-group">
           <label class="field-label">Company Name *</label>
           <input type="text" id="form-company" class="field-input" required />
@@ -2301,6 +2704,25 @@ HTML_PAGE = """<!DOCTYPE html>
         <button type="submit" class="btn btn-primary" id="submit-btn">Save</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Modal for email ingest (interview / rejection auto-fill) -->
+<div id="email-ingest-modal" class="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Paste Email &#x2014; Auto-Fill</h2>
+      <button class="modal-close" onclick="closeEmailIngestModal()" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin:0 0 12px;font-size:0.875rem;color:#6b7280;">Paste the interview invitation or rejection email below. Fields will be extracted automatically.</p>
+      <textarea id="email-ingest-text" class="field-input" rows="10" placeholder="Paste email (headers + body)..." style="resize:vertical;min-height:200px;font-family:monospace;font-size:12px;"></textarea>
+      <div id="email-ingest-status" class="status-msg" style="display:none;margin-top:10px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-secondary" onclick="closeEmailIngestModal()">Cancel</button>
+      <button type="button" id="email-ingest-submit" class="btn btn-primary" onclick="submitEmailIngest()">Extract &amp; Save</button>
+    </div>
   </div>
 </div>
 
@@ -2401,6 +2823,23 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// Toggle `required` on manual-path fields based on JD textarea state.
+// Fields are required when: the JD textarea is empty OR we are editing an
+// existing application (currentEditingId non-null, JD path is irrelevant).
+function _syncJdRequiredFields() {
+  const jdFilled = document.getElementById("form-jd-text").value.trim().length > 0;
+  const isNew = currentEditingId === null;
+  const skipRequired = jdFilled && isNew;
+  ["form-company", "form-position"].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (skipRequired) {
+      el.removeAttribute("required");
+    } else {
+      el.setAttribute("required", "");
+    }
+  });
+}
+
 // Modal functions
 function openNewApplicationModal() {
   currentEditingId = null;
@@ -2409,6 +2848,12 @@ function openNewApplicationModal() {
   document.getElementById("delete-btn").style.display = "none";
   document.getElementById("form-applied-date").valueAsDate = new Date();
   document.getElementById("form-message").style.display = "none";
+  // Reset paste-JD field and submit button in case they were left dirty
+  document.getElementById("form-jd-text").value = "";
+  const submitBtn = document.getElementById("submit-btn");
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Save";
+  _syncJdRequiredFields();
   document.getElementById("app-modal").classList.add("open");
 }
 
@@ -2423,6 +2868,10 @@ async function openDetailPage(appId) {
     _eqLoaded = false;
     _ivLoaded = false;
     _ofLoaded = false;
+    _rjLoaded = false;
+    _rjRecord = null;
+    _pgState = {};
+    _PREP_GUIDE_PROVIDER_OK = null;
 
     // Update sidebar header
     document.getElementById("detail-company").textContent = app.company;
@@ -2474,11 +2923,39 @@ async function openDetailPage(appId) {
 function closeApplicationModal() {
   document.getElementById("app-modal").classList.remove("open");
   currentEditingId = null;
+  _syncJdRequiredFields();
 }
 
 async function handleApplicationFormSubmit(event) {
   event.preventDefault();
-  
+
+  const jdText = document.getElementById("form-jd-text").value.trim();
+
+  // --- from-text path: JD was pasted ---
+  if (jdText && !currentEditingId) {
+    const submitBtn = document.getElementById("submit-btn");
+    const msgEl = document.getElementById("form-message");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Extracting\u2026";
+    msgEl.style.display = "none";
+
+    try {
+      const res = await apiFetch("POST", "/applications/from-text", { text: jdText });
+      const data = await res.json();
+      closeApplicationModal();
+      await loadApplications();
+    } catch (e) {
+      msgEl.textContent = "Error: " + e.message;
+      msgEl.className = "status-msg error";
+      msgEl.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Save";
+    }
+    return;
+  }
+
+  // --- manual path (existing behaviour) ---
   const company = document.getElementById("form-company").value;
   const position = document.getElementById("form-position").value;
   const status = document.getElementById("form-status").value;
@@ -2557,6 +3034,7 @@ function switchDetailStep(step) {
   }
   if (step === "interviews" && currentDetailId && !_ivLoaded) { _ivLoaded = true; _ivLoad(); }
   if (step === "offers" && currentDetailId && !_ofLoaded) { _ofLoaded = true; _ofLoad(); }
+  if (step === "app-details" && currentDetailId && !_rjLoaded) { _rjLoaded = true; _rjLoad(); }
   var dc = document.querySelector(".detail-content");
   if (dc) {
     if (step === "cv-cover") {
@@ -3360,6 +3838,7 @@ async function switchToSettings() {
   loadPersonalInfo();
   await loadKbSettings();
   loadGmailSettings();
+  _msGraphLoadStatus();
   await loadPromptSettings();
 }
 
@@ -3399,6 +3878,21 @@ document.addEventListener("DOMContentLoaded", function() {
   if (view === "settings" && section === "gmail") {
     switchToSettings();
     switchSettingsSection("gmail");
+  }
+
+  // Handle Outlook OAuth callback redirect (?ms_graph_connected=1)
+  if (params.get("ms_graph_connected") === "1") {
+    history.replaceState(null, "", window.location.pathname);
+    switchToSettings();
+    switchSettingsSection("ms-graph");
+    _msGraphLoadStatus();
+    const msgEl = document.getElementById("ms-graph-settings-msg");
+    if (msgEl) {
+      msgEl.textContent = "Outlook calendar connected successfully!";
+      msgEl.className = "status-msg success";
+      msgEl.style.display = "block";
+      setTimeout(function() { msgEl.style.display = "none"; }, 4000);
+    }
   }
 });
 
@@ -3483,6 +3977,12 @@ async function loadAiSettings() {
     ]);
     _catalog = await catResp.json();
     _stored = await setResp.json();
+    var enrichToggle = document.getElementById("search-enrichment-toggle");
+    if (enrichToggle) {
+      enrichToggle.checked = (_stored.search_enrichment_enabled !== undefined && _stored.search_enrichment_enabled !== null)
+        ? !!_stored.search_enrichment_enabled
+        : true;
+    }
     renderProviderDropdown();
     renderStepModelOverrides();
     await loadTemplateSettings();
@@ -3709,7 +4209,12 @@ async function saveAiSettings() {
   const model = document.getElementById("ai-model").value;
   const prov = _providerById(pid);
 
-  const body = { llm_provider: pid, llm_model: model };
+  const enrichToggle = document.getElementById("search-enrichment-toggle");
+  const body = {
+    llm_provider: pid,
+    llm_model: model,
+    search_enrichment_enabled: enrichToggle ? enrichToggle.checked : true,
+  };
 
   if (prov) {
     prov.fields.forEach(function(f) {
@@ -3722,6 +4227,7 @@ async function saveAiSettings() {
 
   try {
     await apiFetch("POST", "/settings", body);
+    _stored.search_enrichment_enabled = body.search_enrichment_enabled;
     msgEl.textContent = "Settings saved successfully";
     msgEl.className = "status-msg success";
     await loadAiSettings();
@@ -4191,6 +4697,110 @@ async function disconnectGmail() {
 }
 
 
+// ── Microsoft Graph / Outlook Calendar ───────────────────────────────────────
+
+async function _msGraphLoadStatus() {
+  try {
+    const resp = await apiFetch("GET", "/ms_graph/status");
+    const status = await resp.json();
+
+    const dotEl = document.getElementById("ms-graph-status-dot");
+    const textEl = document.getElementById("ms-graph-status-text");
+    const connectBtn = document.getElementById("ms-graph-connect-btn");
+    const disconnectBtn = document.getElementById("ms-graph-disconnect-btn");
+    const syncBtn = document.getElementById("ms-graph-sync-btn");
+
+    if (!dotEl) return;
+
+    if (status.connected) {
+      dotEl.className = "connection-dot connected";
+      textEl.innerHTML = "Connected" + (status.user_email ? " &mdash; <span style='color:#9ca3af'>" + _escHtml(status.user_email) + "</span>" : "");
+      if (connectBtn) connectBtn.style.display = "none";
+      if (disconnectBtn) disconnectBtn.style.display = "inline-block";
+      if (syncBtn) syncBtn.style.display = "inline-block";
+    } else {
+      dotEl.className = "connection-dot disconnected";
+      textEl.innerHTML = "<span style='color:#9ca3af'>Not connected</span>";
+      if (connectBtn) connectBtn.style.display = "inline-block";
+      if (disconnectBtn) disconnectBtn.style.display = "none";
+      if (syncBtn) syncBtn.style.display = "none";
+    }
+  } catch (e) {
+    console.error("Failed to load MS Graph status:", e);
+  }
+}
+
+async function _msGraphConnect() {
+  const msgEl = document.getElementById("ms-graph-settings-msg");
+  if (msgEl) {
+    msgEl.textContent = "Redirecting to Microsoft login...";
+    msgEl.className = "status-msg";
+    msgEl.style.display = "block";
+  }
+  try {
+    const resp = await apiFetch("GET", "/ms_graph/auth-url");
+    const data = await resp.json();
+    window.location.href = data.url;
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = "Error: " + e.message;
+      msgEl.className = "status-msg error";
+    }
+  }
+}
+
+async function _msGraphDisconnect() {
+  if (!confirm("Disconnect Outlook calendar? Events already created in Outlook will remain but jam will forget them.")) return;
+  const msgEl = document.getElementById("ms-graph-settings-msg");
+  if (msgEl) {
+    msgEl.textContent = "Disconnecting...";
+    msgEl.className = "status-msg";
+    msgEl.style.display = "block";
+  }
+  try {
+    const resp = await apiFetch("POST", "/ms_graph/disconnect", {});
+    const data = await resp.json();
+    if (msgEl) {
+      msgEl.textContent = "Outlook calendar disconnected.";
+      msgEl.className = "status-msg success";
+    }
+    await _msGraphLoadStatus();
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = "Error: " + e.message;
+      msgEl.className = "status-msg error";
+    }
+  }
+}
+
+async function _msGraphSyncAll() {
+  const msgEl = document.getElementById("ms-graph-settings-msg");
+  const btn = document.getElementById("ms-graph-sync-btn");
+  if (msgEl) {
+    msgEl.textContent = "Syncing...";
+    msgEl.className = "status-msg";
+    msgEl.style.display = "block";
+  }
+  if (btn) { btn.disabled = true; btn.textContent = "Syncing..."; }
+  try {
+    const resp = await apiFetch("POST", "/ms_graph/sync", {});
+    const data = await resp.json();
+    const msg = "Synced " + data.synced + " interview" + (data.synced !== 1 ? "s" : "") + " (" + data.errors + " error" + (data.errors !== 1 ? "s" : "") + ").";
+    if (msgEl) {
+      msgEl.textContent = msg;
+      msgEl.className = "status-msg success";
+    }
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = "Error: " + e.message;
+      msgEl.className = "status-msg error";
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Sync all"; }
+  }
+}
+
+
 // Import from URL
 async function importFromUrl() {
   const input = document.getElementById('import-url');
@@ -4275,6 +4885,9 @@ var _ivLoaded = false;
 var _ivSaveTimers = {};
 var _ofLoaded = false;
 var _ofSaveTimers = {};
+var _rjLoaded = false;
+var _rjSaveTimer = null;
+var _rjRecord = null;
 
 function _downloadPdf(docType) {
   var url = _currentPdfUrl[docType];
@@ -5011,6 +5624,15 @@ function _ivMakeCard(item) {
   });
 
   actions.appendChild(statusBadge);
+
+  if (item.graph_event_id) {
+    var syncBadge = document.createElement("span");
+    syncBadge.className = "iv-sync-badge iv-sync-ok";
+    syncBadge.title = "Synced to Outlook";
+    syncBadge.textContent = "✓ Outlook";
+    actions.appendChild(syncBadge);
+  }
+
   actions.appendChild(delBtn);
   header.appendChild(chevron);
   header.appendChild(preview);
@@ -5029,6 +5651,8 @@ function _ivMakeCard(item) {
     confidenceOpts += "<option value=\\"" + i + "\\"" + (item.confidence === i ? " selected" : "") + ">" + i + "</option>";
   }
 
+  var initialLinksPreview = (item.links || "").split("\\n").filter(function(u){ return u.trim(); }).map(function(u){ return "<a href=\\"" + _escAttr(u.trim()) + "\\" target=\\"_blank\\" rel=\\"noopener\\">" + _escHtml(u.trim()) + "</a>"; }).join("<br>");
+
   body.innerHTML =
     "<div style=\\"display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;\\">" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Type</label><select class=\\"field-input iv-round_type\\" onchange=\\"_ivScheduleSave(this)\\">" + typeOpts + "</select></div>" +
@@ -5041,6 +5665,11 @@ function _ivMakeCard(item) {
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Location / Link</label><input type=\\"text\\" class=\\"field-input iv-location\\" value=\\"" + _escAttr(item.location) + "\\" oninput=\\"_ivScheduleSave(this)\\"></div>" +
       "<div class=\\"form-group\\"><label class=\\"field-label\\">Confidence (1-5)</label><select class=\\"field-input iv-confidence\\" onchange=\\"_ivScheduleSave(this)\\">" + confidenceOpts + "</select></div>" +
     "</div>" +
+    "<div class=\\"form-group\\" style=\\"margin-bottom:16px;\\">" +
+      "<label class=\\"field-label\\">Links</label>" +
+      "<div class=\\"iv-links-preview\\" style=\\"margin-bottom:6px;font-size:0.85rem;line-height:1.6;\\">" + initialLinksPreview + "</div>" +
+      "<textarea class=\\"field-input iv-links\\" rows=\\"3\\" oninput=\\"_ivScheduleSave(this);_ivUpdateLinksPreview(this)\\" placeholder=\\"One URL per line...\\">" + _escHtml(item.links || "") + "</textarea>" +
+    "</div>" +
     "<label class=\\"field-label\\" style=\\"margin-top:16px;\\">Preparation</label>" +
     "<div class=\\"form-group\\"><label class=\\"field-label\\">Prep Notes</label><textarea class=\\"field-input iv-prep_notes\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.prep_notes) + "</textarea></div>" +
     "<label class=\\"field-label\\" style=\\"margin-top:16px;\\">Debrief</label>" +
@@ -5050,6 +5679,11 @@ function _ivMakeCard(item) {
       "<div class=\\"form-group\\"><label class=\\"field-label\\">What To Improve</label><textarea class=\\"field-input iv-to_improve\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.to_improve) + "</textarea></div>" +
     "</div>" +
     "<div class=\\"form-group\\" style=\\"margin-top:12px;\\"><label class=\\"field-label\\">General Notes</label><textarea class=\\"field-input iv-debrief_notes\\" oninput=\\"_ivScheduleSave(this)\\">" + _escHtml(item.debrief_notes) + "</textarea></div>";
+
+  // ── Preparation guide section (appended as DOM node) ──
+  var pgSection = _pgMakeSection(item.id);
+  body.appendChild(pgSection);
+
   card.appendChild(body);
   return card;
 }
@@ -5059,9 +5693,14 @@ function _ivToggle(cardOrChild) {
   card.classList.toggle("expanded");
   if (card.classList.contains("expanded")) {
     card.querySelectorAll("textarea").forEach(function(ta) {
+      // Skip iv-* textareas: they use CSS min/max-height + overflow-y:auto instead
+      if (/\biv-/.test(ta.className)) return;
       ta.style.height = "auto";
       ta.style.height = ta.scrollHeight + "px";
     });
+    // Fetch prep guide on first expand
+    var ivId = card.dataset.ivId;
+    if (ivId) _pgLoadOnce(card, ivId);
   }
 }
 
@@ -5097,6 +5736,7 @@ async function _ivSave(card, id) {
     interviewer_names: card.querySelector(".iv-interviewer_names").value,
     location: card.querySelector(".iv-location").value,
     confidence: conf ? parseInt(conf) : null,
+    links: card.querySelector(".iv-links").value,
     prep_notes: card.querySelector(".iv-prep_notes").value,
     questions_asked: card.querySelector(".iv-questions_asked").value,
     went_well: card.querySelector(".iv-went_well").value,
@@ -5129,6 +5769,705 @@ async function _ivDelete(id) {
   } catch (e) {
     console.error("Failed to delete interview round:", e);
   }
+}
+
+function _ivUpdateLinksPreview(el) {
+  var preview = el.closest(".eq-card-body").querySelector(".iv-links-preview");
+  if (!preview) return;
+  var html = (el.value || "").split("\\n").filter(function(u){ return u.trim(); }).map(function(u){
+    return "<a href=\\"" + _escAttr(u.trim()) + "\\" target=\\"_blank\\" rel=\\"noopener\\">" + _escHtml(u.trim()) + "</a>";
+  }).join("<br>");
+  preview.innerHTML = html;
+}
+
+// ── Preparation guide ────────────────────────────────────────────────────
+
+// Per-interview state keyed by interview id
+var _pgState = {};  // {[ivId]: {loaded, markdown, lastGeneratedAt, systemPrompt, userPrompt, searchLog, thinking, isGenerating, editMode, saveTimer}}
+
+var _PREP_GUIDE_PROVIDER_OK = null; // null = not yet checked, true/false after first load
+
+var _PREP_GUIDE_STEPS = [
+  {key: "load_context",     label: "Load context"},
+  {key: "generate_guide",   label: "Research & reason"},
+  {key: "finalize",         label: "Save"}
+];
+
+// Return (or lazily create) the state object for a given interview id
+function _pgGetState(ivId) {
+  if (!_pgState[ivId]) {
+    _pgState[ivId] = {
+      loaded: false,
+      markdown: "",
+      lastGeneratedAt: null,
+      systemPrompt: null,
+      userPrompt: null,
+      searchLog: null,
+      thinking: null,
+      isGenerating: false,
+      editMode: false,
+      saveTimer: null
+    };
+  }
+  return _pgState[ivId];
+}
+
+// Build the entire preparation guide section DOM (called once per card)
+function _pgMakeSection(ivId) {
+  var section = document.createElement("div");
+  section.className = "prep-guide-section";
+  section.dataset.pgIvId = ivId;
+
+  // ── Header row ──
+  var header = document.createElement("div");
+  header.className = "prep-guide-header";
+
+  var title = document.createElement("span");
+  title.className = "prep-guide-title";
+  title.textContent = "Preparation guide";
+
+  var genBtn = document.createElement("button");
+  genBtn.className = "btn btn-primary btn-sm pg-gen-btn";
+  genBtn.textContent = "Generate prep guide";
+  genBtn.setAttribute("aria-label", "Generate preparation guide");
+  genBtn.addEventListener("click", function() { _pgGenerate(ivId); });
+
+  var editBtn = document.createElement("button");
+  editBtn.className = "btn btn-secondary btn-sm pg-edit-btn";
+  editBtn.textContent = "Edit";
+  editBtn.setAttribute("aria-pressed", "false");
+  editBtn.addEventListener("click", function() { _pgToggleEdit(ivId); });
+
+  var savedMsg = document.createElement("span");
+  savedMsg.className = "prep-guide-saved-msg pg-saved-msg";
+  savedMsg.textContent = "Saved";
+  savedMsg.setAttribute("aria-live", "polite");
+
+  var lastGen = document.createElement("span");
+  lastGen.className = "prep-guide-last-gen pg-last-gen";
+
+  header.appendChild(title);
+  header.appendChild(genBtn);
+  header.appendChild(editBtn);
+  header.appendChild(savedMsg);
+  header.appendChild(lastGen);
+  section.appendChild(header);
+
+  // ── Error banner ──
+  var errBanner = document.createElement("div");
+  errBanner.className = "prep-guide-error pg-error";
+  errBanner.setAttribute("role", "alert");
+  section.appendChild(errBanner);
+
+  // ── Progress tracker ──
+  var progress = document.createElement("div");
+  progress.className = "prep-guide-progress pg-progress";
+  progress.setAttribute("aria-live", "polite");
+  progress.setAttribute("aria-label", "Prep guide generation progress");
+  progress.hidden = true;
+  section.appendChild(progress);
+
+  // ── Body ──
+  var body = document.createElement("div");
+  body.className = "prep-guide-body";
+
+  var emptyMsg = document.createElement("div");
+  emptyMsg.className = "prep-guide-empty pg-empty";
+  emptyMsg.textContent = "No prep guide yet \\u2014 click Generate to create one.";
+  body.appendChild(emptyMsg);
+
+  var mdView = document.createElement("div");
+  mdView.className = "prep-guide-markdown pg-md-view";
+  mdView.style.display = "none";
+  body.appendChild(mdView);
+
+  var textarea = document.createElement("textarea");
+  textarea.className = "prep-guide-textarea pg-textarea";
+  textarea.style.display = "none";
+  textarea.setAttribute("aria-label", "Edit preparation guide markdown");
+  textarea.addEventListener("input", function() { _pgScheduleSave(ivId); });
+  body.appendChild(textarea);
+
+  section.appendChild(body);
+
+  // ── Collapsibles ──
+  var collapsibles = document.createElement("div");
+  collapsibles.className = "prep-guide-collapsibles pg-collapsibles";
+  collapsibles.style.display = "none";
+  section.appendChild(collapsibles);
+
+  return section;
+}
+
+// Find the section DOM node for a given interview id (within its card)
+function _pgFindSection(ivId) {
+  return document.querySelector('.prep-guide-section[data-pg-iv-id="' + ivId + '"]');
+}
+
+// Load prep guide once on expand; if already loaded, skip
+async function _pgLoadOnce(card, ivId) {
+  var state = _pgGetState(ivId);
+  if (state.loaded) return;
+  state.loaded = true;
+
+  // Also check provider capability once
+  if (_PREP_GUIDE_PROVIDER_OK === null) {
+    _pgCheckProvider();
+  }
+
+  try {
+    var resp = await apiFetch("GET", "/interviews/" + ivId + "/prep-guide");
+    var data = await resp.json();
+    _pgApplyResponse(ivId, data);
+  } catch (e) {
+    console.error("Failed to load prep guide:", e);
+    state.loaded = false; // allow retry
+  }
+}
+
+// Check provider support and disable Generate button if needed
+async function _pgCheckProvider() {
+  try {
+    var resp = await apiFetch("GET", "/settings");
+    var data = await resp.json();
+    var prov = data.llm_provider || "";
+    _PREP_GUIDE_PROVIDER_OK = (prov === "anthropic" || prov === "cliproxy");
+  } catch (e) {
+    _PREP_GUIDE_PROVIDER_OK = false;
+  }
+  // Update all currently rendered gen buttons
+  document.querySelectorAll(".pg-gen-btn").forEach(function(btn) {
+    _pgApplyProviderState(btn);
+  });
+}
+
+function _pgApplyProviderState(btn) {
+  if (_PREP_GUIDE_PROVIDER_OK === false) {
+    btn.disabled = true;
+    btn.title = "Prep guide requires Anthropic or ClipProxy provider (100-query web search + extended thinking)";
+  } else {
+    // Only re-enable if not generating
+    var section = btn.closest(".prep-guide-section");
+    if (section) {
+      var ivId = section.dataset.pgIvId;
+      var state = _pgGetState(ivId);
+      if (!state.isGenerating) {
+        btn.disabled = false;
+        btn.title = "";
+      }
+    }
+  }
+}
+
+// Apply a PrepGuideResponse to the section
+function _pgApplyResponse(ivId, data) {
+  var state = _pgGetState(ivId);
+  state.markdown = data.markdown || "";
+  state.lastGeneratedAt = data.last_generated_at || null;
+  state.systemPrompt = data.generation_system_prompt || null;
+  state.userPrompt = data.generation_user_prompt || null;
+  state.searchLog = data.web_search_log || null;
+  state.thinking = data.thinking_summary || null;
+  _pgRender(ivId);
+}
+
+// Render the section from state
+function _pgRender(ivId) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var state = _pgGetState(ivId);
+
+  // Update Generate button label
+  var genBtn = section.querySelector(".pg-gen-btn");
+  genBtn.textContent = state.markdown ? "Regenerate" : "Generate prep guide";
+  _pgApplyProviderState(genBtn);
+
+  // Update last generated
+  var lastGen = section.querySelector(".pg-last-gen");
+  if (state.lastGeneratedAt) {
+    var d = new Date(state.lastGeneratedAt);
+    lastGen.textContent = "Last generated: " + d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+  } else {
+    lastGen.textContent = "";
+  }
+
+  // Body: show/hide appropriately
+  var empty = section.querySelector(".pg-empty");
+  var mdView = section.querySelector(".pg-md-view");
+  var textarea = section.querySelector(".pg-textarea");
+
+  if (state.editMode) {
+    empty.style.display = "none";
+    mdView.style.display = "none";
+    textarea.style.display = "";
+    if (textarea.value !== state.markdown) textarea.value = state.markdown;
+    var editBtn = section.querySelector(".pg-edit-btn");
+    editBtn.textContent = "View";
+    editBtn.setAttribute("aria-pressed", "true");
+  } else {
+    textarea.style.display = "none";
+    var editBtn = section.querySelector(".pg-edit-btn");
+    editBtn.textContent = "Edit";
+    editBtn.setAttribute("aria-pressed", "false");
+    if (state.markdown) {
+      empty.style.display = "none";
+      mdView.style.display = "";
+      mdView.innerHTML = _pgRenderMarkdown(state.markdown);
+    } else {
+      empty.style.display = "";
+      mdView.style.display = "none";
+    }
+  }
+
+  // Collapsibles
+  _pgRenderCollapsibles(ivId, section, state);
+}
+
+// Render the three collapsibles from state
+function _pgRenderCollapsibles(ivId, section, state) {
+  var container = section.querySelector(".pg-collapsibles");
+  var hasAny = state.systemPrompt || state.userPrompt || state.searchLog || state.thinking;
+  container.style.display = hasAny ? "" : "none";
+  if (!hasAny) return;
+
+  container.innerHTML = "";
+
+  // View prompts
+  if (state.systemPrompt || state.userPrompt) {
+    var d = document.createElement("details");
+    d.className = "prep-guide-collapsible";
+    var s = document.createElement("summary");
+    s.textContent = "View prompts";
+    d.appendChild(s);
+    var body = document.createElement("div");
+    body.className = "prep-guide-collapsible-body";
+    if (state.systemPrompt) {
+      var lbl = document.createElement("div");
+      lbl.style.cssText = "font-size:0.75rem;font-weight:600;color:#6b7280;margin-bottom:4px;";
+      lbl.textContent = "System prompt";
+      body.appendChild(lbl);
+      var pre = document.createElement("pre");
+      pre.textContent = state.systemPrompt;
+      body.appendChild(pre);
+    }
+    if (state.userPrompt) {
+      var lbl2 = document.createElement("div");
+      lbl2.style.cssText = "font-size:0.75rem;font-weight:600;color:#6b7280;margin:8px 0 4px;";
+      lbl2.textContent = "User context prompt";
+      body.appendChild(lbl2);
+      var pre2 = document.createElement("pre");
+      pre2.textContent = state.userPrompt;
+      body.appendChild(pre2);
+    }
+    d.appendChild(body);
+    container.appendChild(d);
+  }
+
+  // Web searches
+  if (state.searchLog) {
+    var searches = [];
+    try { searches = JSON.parse(state.searchLog); } catch (e) {}
+    if (searches.length) {
+      var d2 = document.createElement("details");
+      d2.className = "prep-guide-collapsible";
+      var s2 = document.createElement("summary");
+      s2.textContent = "Web searches used (" + searches.length + ")";
+      d2.appendChild(s2);
+      var body2 = document.createElement("div");
+      body2.className = "prep-guide-collapsible-body";
+      var ul = document.createElement("ul");
+      searches.forEach(function(item) {
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = _escAttr(item.url || "");
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = item.title || item.url || item.query || "";
+        li.appendChild(a);
+        if (item.query) {
+          var q = document.createTextNode(" \\u2014 searched for \\u201c" + item.query + "\\u201d");
+          li.appendChild(q);
+        }
+        ul.appendChild(li);
+      });
+      body2.appendChild(ul);
+      d2.appendChild(body2);
+      container.appendChild(d2);
+    }
+  }
+
+  // Model reasoning
+  if (state.thinking) {
+    var d3 = document.createElement("details");
+    d3.className = "prep-guide-collapsible";
+    var s3 = document.createElement("summary");
+    s3.textContent = "Model reasoning";
+    d3.appendChild(s3);
+    var body3 = document.createElement("div");
+    body3.className = "prep-guide-collapsible-body";
+    var pre3 = document.createElement("pre");
+    pre3.textContent = state.thinking;
+    body3.appendChild(pre3);
+    d3.appendChild(body3);
+    container.appendChild(d3);
+  }
+}
+
+// Toggle edit mode
+function _pgToggleEdit(ivId) {
+  var state = _pgGetState(ivId);
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+
+  if (state.editMode) {
+    // Leaving edit mode — save if changed
+    var textarea = section.querySelector(".pg-textarea");
+    var newVal = textarea.value;
+    if (newVal !== state.markdown) {
+      state.markdown = newVal;
+      _pgSaveNow(ivId);
+    }
+    state.editMode = false;
+  } else {
+    state.editMode = true;
+  }
+  _pgRender(ivId);
+}
+
+// Debounced save from textarea input
+function _pgScheduleSave(ivId) {
+  var state = _pgGetState(ivId);
+  clearTimeout(state.saveTimer);
+  state.saveTimer = setTimeout(function() {
+    var section = _pgFindSection(ivId);
+    if (!section) return;
+    var textarea = section.querySelector(".pg-textarea");
+    if (textarea) {
+      state.markdown = textarea.value;
+      _pgSaveNow(ivId);
+    }
+  }, 800);
+}
+
+async function _pgSaveNow(ivId) {
+  var state = _pgGetState(ivId);
+  try {
+    var resp = await apiFetch("PUT", "/interviews/" + ivId + "/prep-guide", { markdown: state.markdown });
+    var data = await resp.json();
+    state.lastGeneratedAt = data.last_generated_at || state.lastGeneratedAt;
+    // Show saved indicator
+    var section = _pgFindSection(ivId);
+    if (section) {
+      var savedMsg = section.querySelector(".pg-saved-msg");
+      if (savedMsg) {
+        savedMsg.classList.add("visible");
+        setTimeout(function() { savedMsg.classList.remove("visible"); }, 1800);
+      }
+      var lastGen = section.querySelector(".pg-last-gen");
+      if (lastGen && state.lastGeneratedAt) {
+        var d = new Date(state.lastGeneratedAt);
+        lastGen.textContent = "Last generated: " + d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"});
+      }
+    }
+  } catch (e) {
+    console.error("Failed to save prep guide:", e);
+  }
+}
+
+// Show/hide error banner
+function _pgSetError(ivId, msg) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var banner = section.querySelector(".pg-error");
+  if (!banner) return;
+  if (msg) {
+    banner.textContent = msg;
+    banner.style.display = "";
+  } else {
+    banner.style.display = "none";
+    banner.textContent = "";
+  }
+}
+
+// Init the prep guide progress tracker
+function _pgInitProgress(ivId) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var container = section.querySelector(".pg-progress");
+  container.innerHTML = "";
+  _PREP_GUIDE_STEPS.forEach(function(step, i) {
+    if (i > 0) {
+      var sep = document.createElement("span");
+      sep.className = "gen-progress-sep";
+      sep.textContent = "\\u203a";
+      container.appendChild(sep);
+    }
+    var el = document.createElement("span");
+    el.className = "gen-progress-step";
+    el.setAttribute("data-step-key", step.key);
+    var icon = document.createElement("span");
+    icon.className = "step-icon";
+    el.appendChild(icon);
+    el.appendChild(document.createTextNode(step.label));
+    container.appendChild(el);
+  });
+  container.hidden = false;
+}
+
+function _pgUpdateProgress(ivId, activeNode) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var container = section.querySelector(".pg-progress");
+  var step = container.querySelector(".gen-progress-step[data-step-key=\\"" + activeNode + "\\"]");
+  if (!step) return;
+  if (step.classList.contains("completed")) {
+    var allSteps = container.querySelectorAll(".gen-progress-step");
+    var found = false;
+    for (var i = 0; i < allSteps.length; i++) {
+      if (allSteps[i] === step) found = true;
+      if (found) allSteps[i].className = "gen-progress-step";
+    }
+  }
+  var prev = container.querySelector(".gen-progress-step.active");
+  if (prev) prev.className = "gen-progress-step completed";
+  step.className = "gen-progress-step active";
+}
+
+function _pgCompleteProgress(ivId) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var container = section.querySelector(".pg-progress");
+  container.querySelectorAll(".gen-progress-step").forEach(function(s) {
+    s.className = "gen-progress-step completed";
+  });
+}
+
+function _pgErrorProgress(ivId) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var container = section.querySelector(".pg-progress");
+  var active = container.querySelector(".gen-progress-step.active");
+  if (active) active.className = "gen-progress-step error";
+}
+
+function _pgHideProgress(ivId) {
+  var section = _pgFindSection(ivId);
+  if (!section) return;
+  var container = section.querySelector(".pg-progress");
+  container.hidden = true;
+  container.innerHTML = "";
+}
+
+async function _pgGenerate(ivId) {
+  var state = _pgGetState(ivId);
+  if (state.isGenerating) return;
+
+  _pgSetError(ivId, null);
+  state.isGenerating = true;
+
+  // Disable buttons
+  var section = _pgFindSection(ivId);
+  if (section) {
+    var genBtn = section.querySelector(".pg-gen-btn");
+    var editBtn = section.querySelector(".pg-edit-btn");
+    genBtn.disabled = true;
+    editBtn.disabled = true;
+  }
+
+  _pgInitProgress(ivId);
+
+  var resp;
+  try {
+    resp = await fetch(API_BASE + "/interviews/" + ivId + "/prep-guide/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify({})
+    });
+  } catch (e) {
+    _pgHideProgress(ivId);
+    _pgSetError(ivId, "Network error: " + e.message);
+    state.isGenerating = false;
+    _pgRender(ivId);
+    return;
+  }
+
+  if (!resp.ok) {
+    var errData = await resp.json().catch(function() { return { detail: "Request failed" }; });
+    _pgHideProgress(ivId);
+    _pgSetError(ivId, errData.detail || "Generation failed");
+    state.isGenerating = false;
+    _pgRender(ivId);
+    return;
+  }
+
+  // Stream SSE response
+  var reader = resp.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = "";
+
+  try {
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      var lines = buffer.split("\\n");
+      buffer = lines.pop();
+
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (!line.startsWith("data: ")) continue;
+        var raw = line.slice(6).trim();
+        if (!raw) continue;
+        var evt;
+        try { evt = JSON.parse(raw); } catch (e) { continue; }
+
+        if (evt.node && evt.node !== "done" && evt.node !== "error") {
+          _pgUpdateProgress(ivId, evt.node);
+        }
+
+        if (evt.node === "done") {
+          _pgCompleteProgress(ivId);
+          state.markdown = evt.markdown || "";
+          state.systemPrompt = evt.generation_system_prompt || null;
+          state.userPrompt = evt.generation_user_prompt || null;
+          state.searchLog = evt.web_search_log || null;
+          state.thinking = evt.thinking_summary || null;
+          // Reload full response to get timestamps
+          try {
+            var fresh = await apiFetch("GET", "/interviews/" + ivId + "/prep-guide");
+            var freshData = await fresh.json();
+            state.lastGeneratedAt = freshData.last_generated_at || null;
+          } catch (e2) { /* use what we have */ }
+          if (evt.error) {
+            _pgSetError(ivId, evt.error);
+          }
+          _pgHideProgress(ivId);
+          state.isGenerating = false;
+          state.editMode = false;
+          _pgRender(ivId);
+        }
+
+        if (evt.node === "error" || (evt.error && evt.node !== "done")) {
+          _pgErrorProgress(ivId);
+          _pgSetError(ivId, evt.error || evt.detail || "Generation failed");
+          state.isGenerating = false;
+          _pgRender(ivId);
+        }
+      }
+    }
+  } catch (e) {
+    _pgHideProgress(ivId);
+    _pgSetError(ivId, "Stream error: " + e.message);
+    state.isGenerating = false;
+    _pgRender(ivId);
+  }
+}
+
+// Minimal markdown-to-HTML renderer with flashcard support
+function _pgRenderMarkdown(md) {
+  if (!md) return "";
+
+  var parts = [];
+  var flashcards = [];
+
+  // First pass: extract flashcard blocks
+  var fcRegex = /```flashcard\\n([\\s\\S]*?)\\n```/g;
+  var lastIndex = 0;
+  var match;
+  while ((match = fcRegex.exec(md)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({type: "md", text: md.slice(lastIndex, match.index)});
+    }
+    parts.push({type: "flashcard", text: match[1]});
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < md.length) {
+    parts.push({type: "md", text: md.slice(lastIndex)});
+  }
+
+  var html = "";
+  parts.forEach(function(part) {
+    if (part.type === "flashcard") {
+      html += _pgRenderFlashcard(part.text);
+    } else {
+      html += _pgRenderMd(part.text);
+    }
+  });
+  return html;
+}
+
+function _pgRenderFlashcard(text) {
+  var qMatch = text.match(/^Q:\\s*(.+)$/m);
+  var aMatch = text.match(/^A:\\s*(.+)$/m);
+  var q = qMatch ? _escHtml(qMatch[1].trim()) : _escHtml(text.trim());
+  var a = aMatch ? _escHtml(aMatch[1].trim()) : "";
+  // Use a height spacer (tallest of the two faces) so the flashcard takes up space
+  var longerText = q.length >= a.length ? q : a;
+  return (
+    '<div class="flashcard" role="button" tabindex="0" aria-label="Flashcard: click to flip" onclick="this.classList.toggle(\\'flipped\\')" onkeydown="if(event.key===\\'Enter\\'||event.key===\\' \\'){this.classList.toggle(\\'flipped\\');event.preventDefault();}">' +
+      '<div class="flashcard-inner">' +
+        '<div class="flashcard-face front"><span class="flashcard-label">Q</span> <span>' + q + '</span></div>' +
+        '<div class="flashcard-face back"><span class="flashcard-label">A</span> <span>' + a + '</span></div>' +
+        '<div class="flashcard-height-spacer"><span class="flashcard-label">Q</span> <span>' + longerText + '</span></div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function _pgRenderMd(text) {
+  if (!text) return "";
+  // Escape HTML first
+  var t = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Fenced code blocks (must come before inline code)
+  t = t.replace(/```([\\s\\S]*?)```/g, function(_, code) {
+    return "<pre><code>" + code + "</code></pre>";
+  });
+
+  // Headings
+  t = t.replace(/^######\\s+(.+)$/gm, "<h6>$1</h6>");
+  t = t.replace(/^#####\\s+(.+)$/gm, "<h5>$1</h5>");
+  t = t.replace(/^####\\s+(.+)$/gm, "<h4>$1</h4>");
+  t = t.replace(/^###\\s+(.+)$/gm, "<h3>$1</h3>");
+  t = t.replace(/^##\\s+(.+)$/gm, "<h2>$1</h2>");
+  t = t.replace(/^#\\s+(.+)$/gm, "<h1>$1</h1>");
+
+  // Bold and italic
+  t = t.replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>");
+  t = t.replace(/\\*([^*]+)\\*/g, "<em>$1</em>");
+
+  // Inline code
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+
+  // Links
+  t = t.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  // Unordered lists
+  t = t.replace(/((?:^[ \\t]*[-*+][ \\t]+.+(?:\\n|$))+)/gm, function(block) {
+    var items = block.replace(/^[ \\t]*[-*+][ \\t]+(.+)$/gm, "<li>$1</li>");
+    return "<ul>" + items + "</ul>";
+  });
+
+  // Ordered lists
+  t = t.replace(/((?:^[ \\t]*\\d+\\.[ \\t]+.+(?:\\n|$))+)/gm, function(block) {
+    var items = block.replace(/^[ \\t]*\\d+\\.[ \\t]+(.+)$/gm, "<li>$1</li>");
+    return "<ol>" + items + "</ol>";
+  });
+
+  // Paragraphs: split on double newlines, wrap non-tag lines in <p>
+  var paragraphs = t.split(/\\n{2,}/);
+  t = paragraphs.map(function(para) {
+    para = para.trim();
+    if (!para) return "";
+    if (/^<(h[1-6]|ul|ol|pre|blockquote)/i.test(para)) return para;
+    // Replace single newlines within paragraph with <br>
+    return "<p>" + para.replace(/\\n/g, "<br>") + "</p>";
+  }).join("\\n");
+
+  return t;
 }
 
 // ── Offers ──────────────────────────────────────────────────────────────
@@ -5746,6 +7085,186 @@ async function _critiqueDoc(docType) {
         _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
       }
     }
+  }
+}
+
+// ── Email ingest modal ─────────────────────────────────────────────────
+
+function openEmailIngestModal() {
+  if (!currentDetailId) return;
+  document.getElementById("email-ingest-text").value = "";
+  var status = document.getElementById("email-ingest-status");
+  status.style.display = "none";
+  status.textContent = "";
+  var submitBtn = document.getElementById("email-ingest-submit");
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Extract & Save";
+  document.getElementById("email-ingest-modal").classList.add("open");
+}
+
+function closeEmailIngestModal() {
+  document.getElementById("email-ingest-modal").classList.remove("open");
+}
+
+async function submitEmailIngest() {
+  var emailText = document.getElementById("email-ingest-text").value.trim();
+  if (!emailText) return;
+  var submitBtn = document.getElementById("email-ingest-submit");
+  var status = document.getElementById("email-ingest-status");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Extracting…";
+  status.style.display = "none";
+
+  try {
+    var resp = await fetch(API_BASE + "/applications/" + currentDetailId + "/email/ingest", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email_text: emailText })
+    });
+
+    if (!resp.ok) {
+      var errData;
+      try { errData = await resp.json(); } catch(ex) { errData = null; }
+      var detail = errData && errData.detail;
+      var errMsg;
+      if (detail && typeof detail === "object" && detail.message) {
+        errMsg = detail.message;
+      } else if (typeof detail === "string") {
+        errMsg = detail;
+      } else {
+        errMsg = "Error " + resp.status + ": " + resp.statusText;
+      }
+      status.textContent = errMsg;
+      status.className = "status-msg error";
+      status.style.display = "block";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Extract & Save";
+      return;
+    }
+
+    var data = await resp.json();
+    if (data.kind === "interview_invite") {
+      closeEmailIngestModal();
+      _ivLoaded = false;
+      await _ivLoad();
+      _ivLoaded = true;
+      // Auto-expand the newest card (latest by created_at)
+      var list = document.getElementById("iv-list");
+      var cards = list.querySelectorAll(".eq-card");
+      if (cards.length > 0) {
+        var newest = cards[cards.length - 1];
+        if (!newest.classList.contains("expanded")) {
+          _ivToggle(newest);
+        }
+      }
+    } else if (data.kind === "rejection") {
+      closeEmailIngestModal();
+      _rjLoaded = true;  // prevent switchDetailStep from firing its own lazy _rjLoad
+      switchDetailStep("app-details");
+      await _rjLoad();
+      _rjLoaded = true;
+      // Brief success flash on the rejection panel
+      var panel = document.getElementById("rejection-panel");
+      if (panel) {
+        panel.style.outline = "2px solid #10b981";
+        setTimeout(function() { panel.style.outline = ""; }, 1500);
+      }
+    } else {
+      // kind === "unknown" — defensive fallback
+      status.textContent = "Email kind not recognised. Please add the round manually.";
+      status.className = "status-msg error";
+      status.style.display = "block";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Extract & Save";
+    }
+  } catch (e) {
+    status.textContent = "Request failed: " + e.message;
+    status.className = "status-msg error";
+    status.style.display = "block";
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Extract & Save";
+  }
+}
+
+// ── Rejection panel ────────────────────────────────────────────────────
+
+async function _rjLoad() {
+  if (!currentDetailId) return;
+  try {
+    var resp = await apiFetch("GET", "/applications/" + currentDetailId + "/rejections");
+    var data = await resp.json();
+    _rjRecord = data.length > 0 ? data[0] : null;
+    _rjRender();
+  } catch (e) {
+    console.error("Failed to load rejection:", e);
+  }
+}
+
+function _rjRender() {
+  var panel = document.getElementById("rejection-panel");
+  if (!panel) return;
+  if (!_rjRecord) {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "block";
+  panel.querySelector(".rj-summary").value = _rjRecord.summary || "";
+  panel.querySelector(".rj-reasons").value = _rjRecord.reasons || "";
+  var linksEl = panel.querySelector(".rj-links");
+  linksEl.value = _rjRecord.links || "";
+  _rjUpdateLinksPreview(linksEl);
+  panel.querySelector(".rj-received_at").value = _rjRecord.received_at ? _rjRecord.received_at.substring(0, 10) : "";
+  panel.querySelector(".rj-followup_status").value = _rjRecord.followup_status || "none";
+  panel.querySelector(".rj-followup_notes").value = _rjRecord.followup_notes || "";
+  panel.querySelector(".rj-raw_email").value = _rjRecord.raw_email || "";
+}
+
+function _rjUpdateLinksPreview(el) {
+  var panel = el.closest("#rejection-panel");
+  if (!panel) return;
+  var preview = panel.querySelector(".rj-links-preview");
+  if (!preview) return;
+  var html = (el.value || "").split("\\n").filter(function(u){ return u.trim(); }).map(function(u){
+    return "<a href=\\"" + _escAttr(u.trim()) + "\\" target=\\"_blank\\" rel=\\"noopener\\">" + _escHtml(u.trim()) + "</a>";
+  }).join("<br>");
+  preview.innerHTML = html;
+}
+
+function _rjScheduleSave(el) {
+  clearTimeout(_rjSaveTimer);
+  _rjSaveTimer = setTimeout(function() { _rjSave(); }, 2000);
+}
+
+async function _rjSave() {
+  if (!_rjRecord) return;
+  var panel = document.getElementById("rejection-panel");
+  if (!panel) return;
+  var body = {
+    summary: panel.querySelector(".rj-summary").value,
+    reasons: panel.querySelector(".rj-reasons").value,
+    links: panel.querySelector(".rj-links").value,
+    received_at: panel.querySelector(".rj-received_at").value || null,
+    followup_status: panel.querySelector(".rj-followup_status").value,
+    followup_notes: panel.querySelector(".rj-followup_notes").value,
+  };
+  try {
+    var resp = await apiFetch("PUT", "/rejections/" + _rjRecord.id, body);
+    _rjRecord = await resp.json();
+  } catch (e) {
+    console.error("Failed to save rejection:", e);
+  }
+}
+
+async function _rjDelete() {
+  if (!_rjRecord) return;
+  if (!confirm("Delete this rejection record?")) return;
+  try {
+    await apiFetch("DELETE", "/rejections/" + _rjRecord.id);
+    _rjRecord = null;
+    _rjRender();
+  } catch (e) {
+    console.error("Failed to delete rejection:", e);
   }
 }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import logging
 import os
 import shutil
 import tempfile
@@ -11,12 +12,13 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import FastAPI, APIRouter, HTTPException, Query
+from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jam.html_page import HTML_PAGE
+from jam import msgraph_client
 from jam.db import (
     init_db, get_all_settings, set_setting, set_settings_batch, delete_setting, get_catalog,
     create_application as db_create_application,
@@ -47,9 +49,17 @@ from jam.db import (
     get_offer as db_get_offer,
     update_offer as db_update_offer,
     delete_offer as db_delete_offer,
+    create_rejection as db_create_rejection,
+    list_rejections as db_list_rejections,
+    get_rejection as db_get_rejection,
+    update_rejection as db_update_rejection,
+    delete_rejection as db_delete_rejection,
+    db_get_prep_guide,
+    db_upsert_prep_guide,
 )
-from jam.llm import extract_job_info
+from jam.llm import extract_job_info, extract_email_info
 from jam.kb_client import ingest_url, ingest_text, close_client
+from jam.generation import run_prep_guide_graph
 
 _ENV_MAP = {
     "openai_api_key":    "OPENAI_API_KEY",
@@ -64,6 +74,7 @@ _ENV_MAP = {
     "gmail_client_secret": "GMAIL_CLIENT_SECRET",
     "gmail_refresh_token": "GMAIL_REFRESH_TOKEN",
     "gmail_user_email": "GMAIL_USER_EMAIL",
+    "search_enrichment_enabled": "JAM_SEARCH_ENRICHMENT_ENABLED",
 }
 
 _PLAIN_KEYS = {
@@ -81,6 +92,7 @@ _PLAIN_KEYS = {
     "prompt_analyze_quality:cv", "prompt_analyze_quality:cover_letter",
     "step_model_generate_or_revise", "step_model_analyze_fit",
     "step_model_analyze_quality", "step_model_analyze_compress",
+    "search_enrichment_enabled",
 }
 
 DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
@@ -316,6 +328,22 @@ class ImportFromUrlResponse(BaseModel):
     kb_ingested: bool
 
 
+class ImportFromTextRequest(BaseModel):
+    """Request body for importing a job posting from pasted text."""
+    text: str = Field(..., min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def text_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be blank")
+        return v
+
+
+# ImportFromTextResponse has the same shape as ImportFromUrlResponse.
+ImportFromTextResponse = ImportFromUrlResponse
+
+
 class SettingsRequest(BaseModel):
     """Request body for saving settings."""
     model_config = ConfigDict(populate_by_name=True)
@@ -358,6 +386,7 @@ class SettingsRequest(BaseModel):
     step_model_analyze_fit: Optional[str] = None
     step_model_analyze_quality: Optional[str] = None
     step_model_analyze_compress: Optional[str] = None
+    search_enrichment_enabled: Optional[bool] = None
 
 
 class DocType(str, Enum):
@@ -430,6 +459,7 @@ class InterviewRoundCreate(BaseModel):
     completed_at: Optional[str] = None
     interviewer_names: str = ""
     location: str = ""
+    links: str = ""
     status: str = "scheduled"
     prep_notes: str = ""
     debrief_notes: str = ""
@@ -448,6 +478,7 @@ class InterviewRoundUpdate(BaseModel):
     completed_at: Optional[str] = None
     interviewer_names: Optional[str] = None
     location: Optional[str] = None
+    links: Optional[str] = None
     status: Optional[str] = None
     prep_notes: Optional[str] = None
     debrief_notes: Optional[str] = None
@@ -468,6 +499,7 @@ class InterviewRoundResponse(BaseModel):
     completed_at: Optional[str] = None
     interviewer_names: str
     location: str
+    links: str = ""
     status: str
     prep_notes: str
     debrief_notes: str
@@ -477,6 +509,7 @@ class InterviewRoundResponse(BaseModel):
     confidence: Optional[int] = None
     sort_order: int
     scheduled_time: str = ""
+    graph_event_id: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -531,6 +564,74 @@ class OfferResponse(BaseModel):
     sort_order: int
     created_at: str
     updated_at: str
+
+
+class RejectionCreate(BaseModel):
+    summary: str = ""
+    reasons: str = ""
+    links: str = ""
+    raw_email: str = ""
+    received_at: Optional[str] = None
+    followup_status: str = "none"
+    followup_notes: str = ""
+
+
+class RejectionUpdate(BaseModel):
+    summary: Optional[str] = None
+    reasons: Optional[str] = None
+    links: Optional[str] = None
+    raw_email: Optional[str] = None
+    received_at: Optional[str] = None
+    followup_status: Optional[str] = None
+    followup_notes: Optional[str] = None
+
+
+class RejectionResponse(BaseModel):
+    id: str
+    application_id: str
+    summary: str
+    reasons: str
+    links: str
+    raw_email: str
+    received_at: Optional[str] = None
+    followup_status: str
+    followup_notes: str
+    created_at: str
+    updated_at: str
+
+
+class EmailIngestRequest(BaseModel):
+    email_text: str = Field(..., min_length=20)
+
+
+class EmailIngestResponse(BaseModel):
+    kind: str
+    confidence: str
+    interview: Optional[InterviewRoundResponse] = None
+    rejection: Optional[RejectionResponse] = None
+    extraction: dict
+
+
+class MSGraphSettingsResponse(BaseModel):
+    connected: bool
+    user_email: str = ""
+
+
+class PrepGuideResponse(BaseModel):
+    """Response model for interview prep guide endpoints."""
+    markdown: str = ""
+    generation_system_prompt: Optional[str] = None
+    generation_user_prompt: Optional[str] = None
+    web_search_log: Optional[str] = None
+    thinking_summary: Optional[str] = None
+    last_generated_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PrepGuideUpdateRequest(BaseModel):
+    """Request body for updating (upserting) an interview prep guide."""
+    markdown: str
 
 
 async def _fetch_page_text(url: str) -> tuple[str, str]:
@@ -720,6 +821,72 @@ async def import_from_url(req: ImportFromUrlRequest):
     )
 
 
+@router.post("/applications/from-text", response_model=ImportFromTextResponse, status_code=201)
+async def import_from_text(req: ImportFromTextRequest):
+    """Import a job posting from pasted text: extract via LLM, create application, ingest into kb."""
+    from datetime import date
+    from jam.config import Settings
+
+    text = req.text.strip()
+
+    # 1. Validate text length
+    if len(text) < 50:
+        raise HTTPException(status_code=400, detail="Text is too short or empty")
+
+    # 2. Extract job info via LLM
+    settings = Settings()
+    try:
+        info = await extract_job_info(text, settings)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"LLM extraction failed: {exc}")
+
+    company = info.get("company") or "Unknown"
+    position = info.get("position") or "Unknown"
+
+    # 3. Build notes from extracted fields
+    notes_parts = []
+    if info.get("requirements"):
+        notes_parts.append(f"Requirements: {info['requirements']}")
+    notes = "\n".join(notes_parts) or None
+
+    # 4. Create the application (url=None since there's no URL)
+    now = datetime.now(timezone.utc).isoformat()
+    app_id = str(uuid4())
+    app_dict = db_create_application(
+        id=app_id,
+        company=company,
+        position=position,
+        status=ApplicationStatus.not_applied_yet.value,
+        url=None,
+        notes=notes,
+        salary_range=info.get("salary_range"),
+        location=info.get("location"),
+        opening_date=info.get("opening_date"),
+        closing_date=info.get("closing_date"),
+        description=info.get("description"),
+        full_text=text,
+        applied_date=date.today().isoformat(),
+        created_at=now,
+        updated_at=now,
+    )
+    _auto_create_documents(app_id)
+
+    # 5. Ingest into kb (fire-and-forget — don't fail if kb is down)
+    # Use ingest_text with an empty source_url since there's no URL
+    kb_ingested = False
+    try:
+        await ingest_text(text, "", settings)
+        kb_ingested = True
+    except Exception:
+        pass
+
+    return ImportFromTextResponse(
+        application=Application(**app_dict),
+        extraction=info,
+        kb_ingested=kb_ingested,
+    )
+
+
 @router.get("/applications/{app_id}", response_model=Application)
 async def get_application(app_id: UUID):
     """Get a single application by ID."""
@@ -842,9 +1009,15 @@ async def get_settings_endpoint():
         "gmail_client_secret_set": bool(stored.get("gmail_client_secret", "")),
         "gmail_refresh_token_set": bool(stored.get("gmail_refresh_token", "")),
     }
+    _BOOL_PLAIN_KEYS = {"search_enrichment_enabled"}
     for key in _PLAIN_KEYS:
-        if stored.get(key):
-            response[key] = stored[key]
+        raw = stored.get(key)
+        if raw is None:
+            continue
+        if key in _BOOL_PLAIN_KEYS:
+            response[key] = raw.lower() in {"1", "true", "yes", "on"}
+        elif raw:
+            response[key] = raw
     return response
 
 
@@ -886,6 +1059,11 @@ async def save_settings_endpoint(req: SettingsRequest):
                     status_code=422,
                     detail=f"Unknown model '{val}' for {key}",
                 )
+    # Normalise bools to "1"/"0" strings for DB storage (env-var parser expects these)
+    _BOOL_KEYS = {"search_enrichment_enabled"}
+    for bk in _BOOL_KEYS:
+        if bk in updates:
+            updates[bk] = "1" if updates[bk] else "0"
     set_settings_batch(updates)
     for key, value in updates.items():
         if key in _ENV_MAP:
@@ -939,12 +1117,145 @@ async def gmail_status():
 async def gmail_disconnect():
     """Clear stored Gmail tokens."""
     from jam.db import delete_setting
-    
+
     delete_setting("gmail_refresh_token")
     delete_setting("gmail_user_email")
     os.environ.pop("GMAIL_REFRESH_TOKEN", None)
     os.environ.pop("GMAIL_USER_EMAIL", None)
     return {"ok": True}
+
+
+# ── MS Graph helpers ──────────────────────────────────────────────────────────
+
+_log = logging.getLogger(__name__)
+
+
+async def _sync_round_to_graph(round_id: str, settings=None) -> None:
+    """Push one interview round to Outlook Calendar. Idempotent.
+
+    - Loads the round and parent application from the DB.
+    - If status != 'scheduled' OR scheduled_at is empty:
+        If graph_event_id is set: delete it from Graph, clear graph_event_id.
+        Otherwise: no-op.
+    - Else: upsert_event(...) and store the returned id in graph_event_id.
+    - Skips entirely (no exception) if ms_graph_refresh_token is empty.
+    - Swallows ALL exceptions and logs them via logging.
+      NEVER raises -- this runs in a BackgroundTask and must not crash the worker.
+    """
+    try:
+        from jam.config import Settings as _Settings
+        settings = settings or _Settings()
+        if not settings.ms_graph_refresh_token:
+            return
+
+        loop = asyncio.get_event_loop()
+        round_row = await loop.run_in_executor(None, lambda: db_get_interview_round(round_id))
+        if round_row is None:
+            return
+
+        app_row = await loop.run_in_executor(
+            None, lambda: db_get_application(round_row["application_id"])
+        )
+
+        is_scheduled = (
+            round_row.get("status") == "scheduled"
+            and bool(round_row.get("scheduled_at"))
+        )
+
+        if not is_scheduled:
+            existing_event_id = round_row.get("graph_event_id")
+            if existing_event_id:
+                await msgraph_client.delete_event(existing_event_id, settings)
+                await loop.run_in_executor(
+                    None,
+                    lambda: db_update_interview_round(round_id, {"graph_event_id": None}),
+                )
+            return
+
+        event_id = await msgraph_client.upsert_event(round_row, app_row, settings)
+        await loop.run_in_executor(
+            None,
+            lambda: db_update_interview_round(round_id, {"graph_event_id": event_id}),
+        )
+    except Exception as exc:
+        _log.warning("_sync_round_to_graph(%s) failed: %s", round_id, exc)
+
+
+async def _delete_graph_event_by_id(graph_event_id: str, settings=None) -> None:
+    """Delete a Graph calendar event by id. Swallows all exceptions."""
+    try:
+        from jam.config import Settings as _Settings
+        settings = settings or _Settings()
+        if not settings.ms_graph_refresh_token:
+            return
+        await msgraph_client.delete_event(graph_event_id, settings)
+    except Exception as exc:
+        _log.warning("_delete_graph_event_by_id(%s) failed: %s", graph_event_id, exc)
+
+
+# ── MS Graph endpoints ────────────────────────────────────────────────────────
+
+@router.get("/ms_graph/auth-url")
+async def ms_graph_auth_url():
+    """Return MS Graph OAuth authorization URL."""
+    from jam.config import Settings
+    settings = Settings()
+    url = msgraph_client.get_auth_url(settings)
+    return {"url": url}
+
+
+@router.get("/ms_graph/status", response_model=MSGraphSettingsResponse)
+async def ms_graph_status():
+    """Return MS Graph connection status."""
+    stored = get_all_settings()
+    connected = bool(stored.get("ms_graph_refresh_token"))
+    user_email = stored.get("ms_graph_user_email", "") if connected else ""
+    return MSGraphSettingsResponse(connected=connected, user_email=user_email or "")
+
+
+@router.post("/ms_graph/disconnect")
+async def ms_graph_disconnect():
+    """Clear stored MS Graph tokens and wipe graph_event_id from all rounds."""
+    delete_setting("ms_graph_refresh_token")
+    delete_setting("ms_graph_access_token")
+    delete_setting("ms_graph_token_expires_at")
+    delete_setting("ms_graph_user_email")
+    os.environ.pop("MS_GRAPH_REFRESH_TOKEN", None)
+    os.environ.pop("MS_GRAPH_ACCESS_TOKEN", None)
+    os.environ.pop("MS_GRAPH_TOKEN_EXPIRES_AT", None)
+    os.environ.pop("MS_GRAPH_USER_EMAIL", None)
+
+    rounds_cleared = 0
+    apps = db_list_applications()
+    for app_row in apps:
+        rounds = db_list_interview_rounds(app_row["id"])
+        for r in rounds:
+            if r.get("graph_event_id"):
+                db_update_interview_round(r["id"], {"graph_event_id": None})
+                rounds_cleared += 1
+
+    return {"disconnected": True, "rounds_cleared": rounds_cleared}
+
+
+@router.post("/ms_graph/sync")
+async def ms_graph_sync():
+    """Push all scheduled interview rounds to Outlook Calendar."""
+    synced = 0
+    errors = 0
+    apps = db_list_applications()
+    for app_row in apps:
+        rounds = db_list_interview_rounds(app_row["id"])
+        for r in rounds:
+            if r.get("status") != "scheduled" or not r.get("scheduled_at"):
+                continue
+            try:
+                await _sync_round_to_graph(r["id"])
+                synced += 1
+            except Exception as exc:
+                _log.warning("ms_graph_sync round %s failed: %s", r["id"], exc)
+                errors += 1
+
+    return {"synced": synced, "errors": errors}
 
 
 # ── Document endpoints ────────────────────────────────────────────────────────
@@ -1084,7 +1395,9 @@ async def list_interviews(app_id: str):
     response_model=InterviewRoundResponse,
     status_code=201,
 )
-async def create_interview(app_id: str, req: InterviewRoundCreate):
+async def create_interview(
+    app_id: str, req: InterviewRoundCreate, background_tasks: BackgroundTasks
+):
     """Create a new interview round for an application."""
     if not db_get_application(app_id):
         raise HTTPException(status_code=404, detail="Application not found")
@@ -1096,6 +1409,7 @@ async def create_interview(app_id: str, req: InterviewRoundCreate):
         completed_at=req.completed_at,
         interviewer_names=req.interviewer_names,
         location=req.location,
+        links=req.links,
         status=req.status,
         prep_notes=req.prep_notes,
         debrief_notes=req.debrief_notes,
@@ -1106,25 +1420,175 @@ async def create_interview(app_id: str, req: InterviewRoundCreate):
         sort_order=req.sort_order,
         scheduled_time=req.scheduled_time or "",
     )
+    background_tasks.add_task(_sync_round_to_graph, row["id"])
     return InterviewRoundResponse(**row)
 
 
 @router.put("/interviews/{interview_id}", response_model=InterviewRoundResponse)
-async def update_interview(interview_id: str, req: InterviewRoundUpdate):
+async def update_interview(
+    interview_id: str, req: InterviewRoundUpdate, background_tasks: BackgroundTasks
+):
     """Update an interview round."""
     if not db_get_interview_round(interview_id):
         raise HTTPException(status_code=404, detail="Interview round not found")
     fields = req.model_dump(exclude_none=True)
     row = db_update_interview_round(interview_id, fields)
+    background_tasks.add_task(_sync_round_to_graph, interview_id)
     return InterviewRoundResponse(**row)
 
 
 @router.delete("/interviews/{interview_id}", status_code=204)
-async def delete_interview(interview_id: str):
+async def delete_interview(
+    interview_id: str, background_tasks: BackgroundTasks
+):
     """Delete an interview round."""
+    existing = db_get_interview_round(interview_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Interview round not found")
+    graph_event_id = existing.get("graph_event_id")
     if not db_delete_interview_round(interview_id):
         raise HTTPException(status_code=404, detail="Interview round not found")
+    if graph_event_id:
+        background_tasks.add_task(_delete_graph_event_by_id, graph_event_id)
     return None
+
+
+# ── Interview prep guides ────────────────────────────────────────────────────
+
+@router.get(
+    "/interviews/{interview_id}/prep-guide",
+    response_model=PrepGuideResponse,
+)
+async def get_prep_guide(interview_id: str):
+    """Return the prep guide for an interview round.
+
+    Returns a PrepGuideResponse with all-default/None fields if no guide exists
+    yet (no 404 — the UI always fetches and treats an empty guide as normal).
+    404 only if the interview round itself does not exist.
+    """
+    if not db_get_interview_round(interview_id):
+        raise HTTPException(status_code=404, detail="Interview round not found")
+    row = db_get_prep_guide(interview_id)
+    if row is None:
+        return PrepGuideResponse()
+    return PrepGuideResponse(
+        markdown=row.get("markdown_source") or "",
+        generation_system_prompt=row.get("generation_system_prompt"),
+        generation_user_prompt=row.get("generation_user_prompt"),
+        web_search_log=row.get("web_search_log"),
+        thinking_summary=row.get("thinking_summary"),
+        last_generated_at=row.get("last_generated_at"),
+        updated_at=row.get("updated_at"),
+        created_at=row.get("created_at"),
+    )
+
+
+@router.put(
+    "/interviews/{interview_id}/prep-guide",
+    response_model=PrepGuideResponse,
+)
+async def put_prep_guide(interview_id: str, body: PrepGuideUpdateRequest):
+    """Upsert the markdown for an interview prep guide.
+
+    Only updates markdown_source; leaves generation_*, web_search_log,
+    thinking_summary untouched on an existing row.
+    404 if the interview round does not exist.
+    """
+    if not db_get_interview_round(interview_id):
+        raise HTTPException(status_code=404, detail="Interview round not found")
+    row = db_upsert_prep_guide(interview_id, markdown_source=body.markdown)
+    return PrepGuideResponse(
+        markdown=row.get("markdown_source") or "",
+        generation_system_prompt=row.get("generation_system_prompt"),
+        generation_user_prompt=row.get("generation_user_prompt"),
+        web_search_log=row.get("web_search_log"),
+        thinking_summary=row.get("thinking_summary"),
+        last_generated_at=row.get("last_generated_at"),
+        updated_at=row.get("updated_at"),
+        created_at=row.get("created_at"),
+    )
+
+
+@router.post("/interviews/{interview_id}/prep-guide/generate")
+async def generate_prep_guide(interview_id: str):
+    """Stream prep guide generation progress via Server-Sent Events.
+
+    Each ``data:`` line is a JSON object with a ``node`` field.
+    The final event has ``node: "done"`` and carries ``markdown``,
+    ``generation_system_prompt``, ``generation_user_prompt``,
+    ``web_search_log``, ``thinking_summary``, and an optional ``error``.
+    """
+    from jam.config import Settings
+
+    settings = Settings()
+
+    interview = db_get_interview_round(interview_id)
+    if not interview:
+        raise HTTPException(status_code=404, detail="Interview round not found")
+
+    application = db_get_application(interview["application_id"])
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    if settings.llm_provider not in ("anthropic", "cliproxy"):
+        raise HTTPException(
+            status_code=400,
+            detail="Prep guide generation requires anthropic or cliproxy provider",
+        )
+
+    # Load CV + cover letter LaTeX if they exist
+    docs = db_list_documents(interview["application_id"])
+    cv_doc = next((d for d in docs if d.get("doc_type") == "cv"), None)
+    cl_doc = next((d for d in docs if d.get("doc_type") == "cover_letter"), None)
+
+    initial_state = {
+        "interview_id": interview["id"],
+        "application_id": application["id"],
+        "job_description": application.get("description") or application.get("full_text") or "",
+        "company": application["company"],
+        "position": application["position"],
+        "round_type": interview.get("round_type", ""),
+        "round_number": interview.get("round_number", 1),
+        "interviewer_names": interview.get("interviewer_names", ""),
+        "interview_links": interview.get("links", ""),
+        "interview_prep_notes": interview.get("prep_notes", ""),
+        "scheduled_at": interview.get("scheduled_at", ""),
+        "cv_latex": cv_doc["latex_source"] if cv_doc else "",
+        "cover_letter_latex": cl_doc["latex_source"] if cl_doc else "",
+        "progress_events": [],
+    }
+
+    async def sse_gen():
+        try:
+            async for event in run_prep_guide_graph(initial_state, settings):
+                yield f"data: {_json.dumps(event)}\n\n"
+                if event.get("node") == "done":
+                    # Persist the result
+                    if not event.get("error"):
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(
+                            None,
+                            lambda: db_upsert_prep_guide(
+                                interview_id,
+                                markdown_source=event.get("markdown", ""),
+                                generation_system_prompt=event.get("generation_system_prompt"),
+                                generation_user_prompt=event.get("generation_user_prompt"),
+                                web_search_log=event.get("web_search_log"),
+                                thinking_summary=event.get("thinking_summary"),
+                                last_generated_at=datetime.now(timezone.utc).isoformat(),
+                            ),
+                        )
+        except Exception as exc:
+            yield f"data: {_json.dumps({'node': 'error', 'status': 'error', 'detail': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        sse_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── Offers ──────────────────────────────────────────────────────────────────
@@ -1184,6 +1648,143 @@ async def delete_offer_endpoint(offer_id: str):
     """Delete an offer."""
     if not db_delete_offer(offer_id):
         raise HTTPException(status_code=404, detail="Offer not found")
+    return None
+
+
+# ── Email ingest ────────────────────────────────────────────────────────────
+
+@router.post(
+    "/applications/{app_id}/email/ingest",
+    response_model=EmailIngestResponse,
+    status_code=201,
+)
+async def ingest_email(app_id: str, req: EmailIngestRequest):
+    """Classify a pasted email as interview invite or rejection and auto-create the record."""
+    from jam.config import Settings
+
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    text = req.email_text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="email_text is empty after stripping")
+
+    settings = Settings()
+    try:
+        info = await extract_email_info(text, settings)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"LLM extraction failed: {exc}")
+
+    kind = info.get("kind", "unknown")
+
+    if kind == "interview_invite":
+        iv = info.get("interview") or {}
+        non_null_fields: dict = {}
+        for field in ("round_type", "scheduled_at", "scheduled_time", "interviewer_names", "location", "prep_notes"):
+            val = iv.get(field)
+            if val is not None:
+                non_null_fields[field] = val
+        links_list = iv.get("links") or []
+        links = "\n".join(links_list)
+        row = db_create_interview_round(
+            application_id=app_id,
+            status="scheduled",
+            links=links,
+            **non_null_fields,
+        )
+        return EmailIngestResponse(
+            kind=kind,
+            confidence=info.get("confidence", ""),
+            interview=InterviewRoundResponse(**row),
+            rejection=None,
+            extraction=info,
+        )
+
+    elif kind == "rejection":
+        rej = info.get("rejection") or {}
+        summary = rej.get("summary") or ""
+        reasons = rej.get("reasons") or ""
+        links_list = rej.get("links") or []
+        links = "\n".join(links_list)
+        received_at = info.get("received_at")
+        row = db_create_rejection(
+            application_id=app_id,
+            summary=summary,
+            reasons=reasons,
+            links=links,
+            raw_email=text,
+            received_at=received_at,
+        )
+        db_update_application(app_id, {
+            "status": "rejected",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        return EmailIngestResponse(
+            kind=kind,
+            confidence=info.get("confidence", ""),
+            interview=None,
+            rejection=RejectionResponse(**row),
+            extraction=info,
+        )
+
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail={"message": "Could not classify email as interview or rejection", "extraction": info},
+        )
+
+
+# ── Rejections ──────────────────────────────────────────────────────────────
+
+@router.get(
+    "/applications/{app_id}/rejections",
+    response_model=list[RejectionResponse],
+)
+async def list_rejections_endpoint(app_id: str):
+    """List all rejections for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    rows = db_list_rejections(app_id)
+    return [RejectionResponse(**r) for r in rows]
+
+
+@router.post(
+    "/applications/{app_id}/rejections",
+    response_model=RejectionResponse,
+    status_code=201,
+)
+async def create_rejection_endpoint(app_id: str, req: RejectionCreate):
+    """Create a new rejection for an application."""
+    if not db_get_application(app_id):
+        raise HTTPException(status_code=404, detail="Application not found")
+    row = db_create_rejection(
+        application_id=app_id,
+        summary=req.summary,
+        reasons=req.reasons,
+        links=req.links,
+        raw_email=req.raw_email,
+        received_at=req.received_at,
+        followup_status=req.followup_status,
+        followup_notes=req.followup_notes,
+    )
+    return RejectionResponse(**row)
+
+
+@router.put("/rejections/{rejection_id}", response_model=RejectionResponse)
+async def update_rejection_endpoint(rejection_id: str, req: RejectionUpdate):
+    """Update a rejection."""
+    if not db_get_rejection(rejection_id):
+        raise HTTPException(status_code=404, detail="Rejection not found")
+    fields = req.model_dump(exclude_none=True)
+    row = db_update_rejection(rejection_id, fields)
+    return RejectionResponse(**row)
+
+
+@router.delete("/rejections/{rejection_id}", status_code=204)
+async def delete_rejection_endpoint(rejection_id: str):
+    """Delete a rejection."""
+    if not db_delete_rejection(rejection_id):
+        raise HTTPException(status_code=404, detail="Rejection not found")
     return None
 
 
@@ -1530,6 +2131,25 @@ async def gmail_callback(code: str, state: str | None = None, iss: str | None = 
 <p style="color:red">Connection failed: {e}</p>
 <p>Close this window and try again.</p>
 </body></html>""", status_code=400)
+
+
+@app.get("/ms_graph/callback")
+async def ms_graph_callback(code: str, state: str | None = None):
+    """Exchange MS Graph OAuth code, store tokens, redirect to home."""
+    from jam.config import Settings
+    settings = Settings()
+    result = await msgraph_client.exchange_code(code, settings)
+    set_settings_batch({
+        "ms_graph_refresh_token": result["refresh_token"],
+        "ms_graph_access_token": result["access_token"],
+        "ms_graph_token_expires_at": result["expires_at"],
+        "ms_graph_user_email": result["user_email"],
+    })
+    os.environ["MS_GRAPH_REFRESH_TOKEN"] = result["refresh_token"]
+    os.environ["MS_GRAPH_ACCESS_TOKEN"] = result["access_token"]
+    os.environ["MS_GRAPH_TOKEN_EXPIRES_AT"] = result["expires_at"]
+    os.environ["MS_GRAPH_USER_EMAIL"] = result["user_email"]
+    return RedirectResponse("/?ms_graph_connected=1")
 
 
 @app.on_event("startup")

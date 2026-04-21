@@ -1,6 +1,6 @@
 # db Knowledge
 <!-- source: jam/db.py -->
-<!-- hash: 41b1c9f81fd6 -->
+<!-- hash: 09e66e0f1740 -->
 <!-- updated: 2026-04-21 -->
 
 ## Public API
@@ -38,7 +38,7 @@
 | `get_extra_question` | `(question_id: str, db_path?) -> dict \| None` | Return single extra question or None |
 | `update_extra_question` | `(question_id: str, fields: dict, db_path?) -> dict \| None` | Update extra question fields (auto-sets updated_at) |
 | `delete_extra_question` | `(question_id: str, db_path?) -> bool` | Delete extra question, returns True if removed |
-| `create_interview_round` | `(application_id, round_type?, round_number?, scheduled_at?, scheduled_time?, completed_at?, interviewer_names?, location?, status?, prep_notes?, debrief_notes?, questions_asked?, went_well?, to_improve?, confidence?, sort_order?, db_path?) -> dict` | Insert new interview round (auto-generates UUID) |
+| `create_interview_round` | `(application_id, round_type?, round_number?, scheduled_at?, scheduled_time?, completed_at?, interviewer_names?, location?, links?, status?, prep_notes?, debrief_notes?, questions_asked?, went_well?, to_improve?, confidence?, sort_order?, db_path?) -> dict` | Insert new interview round (auto-generates UUID) |
 | `list_interview_rounds` | `(application_id: str, db_path?) -> list[dict]` | Return interview rounds ordered by sort_order, then created_at |
 | `get_interview_round` | `(round_id: str, db_path?) -> dict \| None` | Return single interview round or None |
 | `update_interview_round` | `(round_id: str, fields: dict, db_path?) -> dict \| None` | Update interview round fields (auto-sets updated_at) |
@@ -48,6 +48,14 @@
 | `get_offer` | `(offer_id: str, db_path?) -> dict \| None` | Return single offer or None |
 | `update_offer` | `(offer_id: str, fields: dict, db_path?) -> dict \| None` | Update offer fields (auto-sets updated_at) |
 | `delete_offer` | `(offer_id: str, db_path?) -> bool` | Delete offer, returns True if removed |
+| `create_rejection` | `(application_id, summary?, reasons?, links?, raw_email?, received_at?, followup_status?, followup_notes?, db_path?) -> dict` | Insert new rejection (auto-generates UUID) |
+| `list_rejections` | `(application_id: str, db_path?) -> list[dict]` | Return rejections for application, newest first (ORDER BY created_at DESC) |
+| `get_rejection` | `(rejection_id: str, db_path?) -> dict \| None` | Return single rejection or None |
+| `update_rejection` | `(rejection_id: str, fields: dict, db_path?) -> dict \| None` | Update rejection fields (auto-sets updated_at) |
+| `delete_rejection` | `(rejection_id: str, db_path?) -> bool` | Delete rejection, returns True if removed |
+| `db_get_prep_guide` | `(interview_id: str, db_path?) -> dict \| None` | Return interview prep guide row for interview, or None |
+| `db_upsert_prep_guide` | `(interview_id: str, *, markdown_source, generation_system_prompt?, generation_user_prompt?, web_search_log?, thinking_summary?, last_generated_at?, db_path?) -> dict` | Insert or update (on `interview_id` conflict) the prep guide; always bumps `updated_at`, only writes `last_generated_at` when provided |
+| `db_delete_prep_guide` | `(interview_id: str, db_path?) -> bool` | Delete prep guide for interview, returns True if removed |
 
 ## Key Constants / Schema
 
@@ -195,6 +203,7 @@
 | `completed_at` | TEXT | nullable |
 | `interviewer_names` | TEXT | NOT NULL, DEFAULT '' |
 | `location` | TEXT | NOT NULL, DEFAULT '' |
+| `links` | TEXT | NOT NULL, DEFAULT '' |
 | `status` | TEXT | NOT NULL, DEFAULT 'scheduled' |
 | `prep_notes` | TEXT | NOT NULL, DEFAULT '' |
 | `debrief_notes` | TEXT | NOT NULL, DEFAULT '' |
@@ -203,6 +212,7 @@
 | `to_improve` | TEXT | NOT NULL, DEFAULT '' |
 | `confidence` | INTEGER | nullable |
 | `sort_order` | INTEGER | NOT NULL, DEFAULT 0 |
+| `graph_event_id` | TEXT | nullable (Microsoft Graph event id when synced to Outlook) |
 | `created_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 | `updated_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 
@@ -228,6 +238,39 @@
 | `created_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 | `updated_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 
+**rejections** -- Rejection email tracking per application (status reasons + follow-up placeholder)
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `application_id` | TEXT | NOT NULL, FK -> applications(id) ON DELETE CASCADE |
+| `summary` | TEXT | NOT NULL, DEFAULT '' |
+| `reasons` | TEXT | NOT NULL, DEFAULT '' |
+| `links` | TEXT | NOT NULL, DEFAULT '' (newline-separated URLs) |
+| `raw_email` | TEXT | NOT NULL, DEFAULT '' |
+| `received_at` | TEXT | nullable (ISO date) |
+| `followup_status` | TEXT | NOT NULL, DEFAULT 'none' (none / contacted / responded / closed — placeholder for future reach-back feature) |
+| `followup_notes` | TEXT | NOT NULL, DEFAULT '' |
+| `created_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
+| `updated_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
+
+**interview_prep_guides** -- Generated interview preparation guide (1:1 with interview_rounds)
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | TEXT | PRIMARY KEY |
+| `interview_id` | TEXT | NOT NULL, UNIQUE, FK -> interview_rounds(id) ON DELETE CASCADE |
+| `markdown_source` | TEXT | NOT NULL, DEFAULT '' |
+| `generation_system_prompt` | TEXT | nullable |
+| `generation_user_prompt` | TEXT | nullable |
+| `web_search_log` | TEXT | nullable (JSON array of `{query, url, title}` as string) |
+| `thinking_summary` | TEXT | nullable |
+| `last_generated_at` | TIMESTAMP | nullable |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+| `updated_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP |
+
+The UNIQUE constraint on `interview_id` enforces the 1:1 mapping and doubles as the lookup index. Created via `_create_interview_prep_guides_table(conn)` inside `init_db()`'s atomic migration.
+
 ### Seeded catalog data
 
 Providers (5): `openai`, `anthropic`, `groq`, `ollama`, `cliproxy`
@@ -243,8 +286,9 @@ Provider fields: `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_
 
 ### Cascade deletes
 
-- Deleting an `application` cascades to: `application_meta`, `documents`, `extra_questions`, `interview_rounds`, `offers`
+- Deleting an `application` cascades to: `application_meta`, `documents`, `extra_questions`, `interview_rounds`, `offers`, `rejections`
 - Deleting a `document` cascades to: `document_versions`
+- Deleting an `interview_round` cascades to: `interview_prep_guides`
 
 ## Dependencies
 
@@ -267,7 +311,9 @@ From CLAUDE.md -- these rules MUST be followed when writing migrations:
 4. **Never drop or rename tables outside a transaction**
 5. **Test migrations with existing data** -- unit tests should seed data first, run the migration, and assert data is preserved
 
-The existing `_migrate_applications_table` demonstrates all of these patterns.
+The existing `_migrate_applications_table` and `_migrate_interview_rounds_add_links` migrations demonstrate all of these patterns (both use atomic rename → create → copy → verify row count → drop old inside a single `_connect()` transaction).
+
+Simpler column-add migrations (`_migrate_interview_rounds_add_scheduled_time`, `_migrate_interview_rounds_add_graph_event_id`) use `PRAGMA table_info` + conditional `ALTER TABLE ... ADD COLUMN`, which is idempotent and transaction-safe.
 
 ## Known Limitations
 

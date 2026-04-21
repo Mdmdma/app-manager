@@ -1,15 +1,17 @@
 """SQLite-backed persistence for the jam project.
 
 All database interactions go through this module.  Tables:
-- settings          key-value store for user preferences / API keys
+- settings               key-value store for user preferences / API keys
 - providers/models/provider_fields   LLM catalog (seeded on first run)
-- applications      job application records
-- application_meta  extensible key-value metadata per application
-- documents         LaTeX documents (CVs / cover letters) per application
-- document_versions version history snapshots created on each compile
-- extra_questions   interview / application-form questions per application
-- interview_rounds  interview round tracking per application
-- offers            job offer details per application
+- applications           job application records
+- application_meta       extensible key-value metadata per application
+- documents              LaTeX documents (CVs / cover letters) per application
+- document_versions      version history snapshots created on each compile
+- extra_questions        interview / application-form questions per application
+- interview_rounds       interview round tracking per application
+- interview_prep_guides  one prep guide per interview round
+- offers                 job offer details per application
+- rejections             rejection tracking per application (from rejection emails)
 
 The database file lives at <project_root>/jam.db by default and can be
 overridden via the JAM_DB_PATH environment variable.
@@ -428,6 +430,7 @@ def _create_interview_rounds_table(conn: sqlite3.Connection) -> None:
             completed_at     TEXT,
             interviewer_names TEXT NOT NULL DEFAULT '',
             location         TEXT NOT NULL DEFAULT '',
+            links            TEXT NOT NULL DEFAULT '',
             status           TEXT NOT NULL DEFAULT 'scheduled',
             prep_notes       TEXT NOT NULL DEFAULT '',
             debrief_notes    TEXT NOT NULL DEFAULT '',
@@ -436,8 +439,29 @@ def _create_interview_rounds_table(conn: sqlite3.Connection) -> None:
             to_improve       TEXT NOT NULL DEFAULT '',
             confidence       INTEGER,
             sort_order       INTEGER NOT NULL DEFAULT 0,
+            graph_event_id   TEXT,
             created_at       TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+
+
+def _create_interview_prep_guides_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS interview_prep_guides (
+            id                      TEXT PRIMARY KEY,
+            interview_id            TEXT NOT NULL UNIQUE
+                                        REFERENCES interview_rounds(id) ON DELETE CASCADE,
+            markdown_source         TEXT NOT NULL DEFAULT '',
+            generation_system_prompt TEXT,
+            generation_user_prompt  TEXT,
+            web_search_log          TEXT,
+            thinking_summary        TEXT,
+            last_generated_at       TIMESTAMP,
+            created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -450,6 +474,70 @@ def _migrate_interview_rounds_add_scheduled_time(conn: sqlite3.Connection) -> No
         conn.execute(
             "ALTER TABLE interview_rounds ADD COLUMN scheduled_time TEXT NOT NULL DEFAULT ''"
         )
+
+
+def _migrate_interview_rounds_add_graph_event_id(conn: sqlite3.Connection) -> None:
+    """Add graph_event_id column to interview_rounds if it does not exist."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    if "graph_event_id" not in cols:
+        conn.execute(
+            "ALTER TABLE interview_rounds ADD COLUMN graph_event_id TEXT"
+        )
+
+
+def _migrate_interview_rounds_add_links(conn: sqlite3.Connection) -> None:
+    """Add links column to interview_rounds after location, using atomic table rebuild.
+
+    Uses the rename -> create new -> copy -> verify row count -> drop old pattern
+    so that the new column is positioned correctly (after location) and the
+    migration runs entirely inside the caller's _connect() transaction.
+    """
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    if "links" in cols:
+        return
+
+    old_count = conn.execute("SELECT COUNT(*) FROM interview_rounds").fetchone()[0]
+    conn.execute("ALTER TABLE interview_rounds RENAME TO _interview_rounds_old")
+    conn.execute(
+        """
+        CREATE TABLE interview_rounds (
+            id               TEXT PRIMARY KEY,
+            application_id   TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+            round_type       TEXT NOT NULL DEFAULT 'other',
+            round_number     INTEGER NOT NULL DEFAULT 1,
+            scheduled_at     TEXT,
+            scheduled_time   TEXT NOT NULL DEFAULT '',
+            completed_at     TEXT,
+            interviewer_names TEXT NOT NULL DEFAULT '',
+            location         TEXT NOT NULL DEFAULT '',
+            links            TEXT NOT NULL DEFAULT '',
+            status           TEXT NOT NULL DEFAULT 'scheduled',
+            prep_notes       TEXT NOT NULL DEFAULT '',
+            debrief_notes    TEXT NOT NULL DEFAULT '',
+            questions_asked  TEXT NOT NULL DEFAULT '',
+            went_well        TEXT NOT NULL DEFAULT '',
+            to_improve       TEXT NOT NULL DEFAULT '',
+            confidence       INTEGER,
+            sort_order       INTEGER NOT NULL DEFAULT 0,
+            graph_event_id   TEXT,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    old_cols = [row[1] for row in conn.execute("PRAGMA table_info(_interview_rounds_old)").fetchall()]
+    new_cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    common = [c for c in new_cols if c in old_cols]
+    cols_str = ", ".join(common)
+    conn.execute(
+        f"INSERT INTO interview_rounds ({cols_str}) SELECT {cols_str} FROM _interview_rounds_old"  # noqa: S608
+    )
+    new_count = conn.execute("SELECT COUNT(*) FROM interview_rounds").fetchone()[0]
+    if new_count != old_count:
+        raise RuntimeError(
+            f"Migration row count mismatch: {old_count} -> {new_count}"
+        )
+    conn.execute("DROP TABLE _interview_rounds_old")
 
 
 def _create_offers_table(conn: sqlite3.Connection) -> None:
@@ -478,6 +566,27 @@ def _create_offers_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _create_rejections_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rejections (
+            id               TEXT PRIMARY KEY,
+            application_id   TEXT NOT NULL,
+            summary          TEXT NOT NULL DEFAULT '',
+            reasons          TEXT NOT NULL DEFAULT '',
+            links            TEXT NOT NULL DEFAULT '',
+            raw_email        TEXT NOT NULL DEFAULT '',
+            received_at      TEXT,
+            followup_status  TEXT NOT NULL DEFAULT 'none',
+            followup_notes   TEXT NOT NULL DEFAULT '',
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 def init_db(db_path: Path | None = None) -> None:
@@ -497,7 +606,11 @@ def init_db(db_path: Path | None = None) -> None:
         _create_extra_questions_table(conn)
         _create_interview_rounds_table(conn)
         _migrate_interview_rounds_add_scheduled_time(conn)
+        _migrate_interview_rounds_add_graph_event_id(conn)
+        _migrate_interview_rounds_add_links(conn)
+        _create_interview_prep_guides_table(conn)
         _create_offers_table(conn)
+        _create_rejections_table(conn)
 
 
 # ── Settings CRUD ─────────────────────────────────────────────────────────────
@@ -1012,6 +1125,7 @@ def create_interview_round(
     completed_at: str | None = None,
     interviewer_names: str = "",
     location: str = "",
+    links: str = "",
     status: str = "scheduled",
     prep_notes: str = "",
     debrief_notes: str = "",
@@ -1030,15 +1144,16 @@ def create_interview_round(
             INSERT INTO interview_rounds
                 (id, application_id, round_type, round_number, scheduled_at,
                  scheduled_time, completed_at, interviewer_names, location,
-                 status, prep_notes, debrief_notes, questions_asked, went_well,
-                 to_improve, confidence, sort_order, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 links, status, prep_notes, debrief_notes, questions_asked,
+                 went_well, to_improve, confidence, sort_order,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     datetime('now'), datetime('now'))
             """,
             (r_id, application_id, round_type, round_number, scheduled_at,
-             scheduled_time, completed_at, interviewer_names, location, status,
-             prep_notes, debrief_notes, questions_asked, went_well, to_improve,
-             confidence, sort_order),
+             scheduled_time, completed_at, interviewer_names, location, links,
+             status, prep_notes, debrief_notes, questions_asked, went_well,
+             to_improve, confidence, sort_order),
         )
         row = conn.execute(
             "SELECT * FROM interview_rounds WHERE id = ?", (r_id,)
@@ -1194,5 +1309,185 @@ def delete_offer(
     with _connect(db_path) as conn:
         cursor = conn.execute(
             "DELETE FROM offers WHERE id = ?", (offer_id,)
+        )
+    return cursor.rowcount > 0
+
+
+# ── Rejections CRUD ──────────────────────────────────────────────────────────
+
+def create_rejection(
+    application_id: str,
+    summary: str = "",
+    reasons: str = "",
+    links: str = "",
+    raw_email: str = "",
+    received_at: str | None = None,
+    followup_status: str = "none",
+    followup_notes: str = "",
+    db_path: Path | None = None,
+) -> dict:
+    """Insert a new rejection and return it as a dict."""
+    rej_id = uuid.uuid4().hex
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO rejections
+                (id, application_id, summary, reasons, links, raw_email,
+                 received_at, followup_status, followup_notes,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """,
+            (rej_id, application_id, summary, reasons, links, raw_email,
+             received_at, followup_status, followup_notes),
+        )
+        row = conn.execute(
+            "SELECT * FROM rejections WHERE id = ?", (rej_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def list_rejections(
+    application_id: str, db_path: Path | None = None,
+) -> list[dict]:
+    """Return rejections for an application, ordered newest first."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM rejections WHERE application_id = ? "
+            "ORDER BY created_at DESC",
+            (application_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_rejection(
+    rejection_id: str, db_path: Path | None = None,
+) -> dict | None:
+    """Return a single rejection dict, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM rejections WHERE id = ?", (rejection_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_rejection(
+    rejection_id: str, fields: dict, db_path: Path | None = None,
+) -> dict | None:
+    """Update a rejection's fields. Returns the updated dict, or None."""
+    if not fields:
+        return get_rejection(rejection_id, db_path)
+    with _connect(db_path) as conn:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [rejection_id]
+        conn.execute(
+            f"UPDATE rejections SET {set_clause}, updated_at = datetime('now') "  # noqa: S608
+            f"WHERE id = ?",
+            values,
+        )
+        row = conn.execute(
+            "SELECT * FROM rejections WHERE id = ?", (rejection_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_rejection(
+    rejection_id: str, db_path: Path | None = None,
+) -> bool:
+    """Delete a rejection. Returns True if a row was removed."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM rejections WHERE id = ?", (rejection_id,)
+        )
+    return cursor.rowcount > 0
+
+
+# ── Interview prep guides CRUD ───────────────────────────────────────────────
+
+def db_get_prep_guide(
+    interview_id: str, db_path: Path | None = None,
+) -> dict | None:
+    """Return the prep guide for *interview_id* as a dict, or None if absent."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM interview_prep_guides WHERE interview_id = ?",
+            (interview_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def db_upsert_prep_guide(
+    interview_id: str,
+    *,
+    markdown_source: str,
+    generation_system_prompt: str | None = None,
+    generation_user_prompt: str | None = None,
+    web_search_log: str | None = None,
+    thinking_summary: str | None = None,
+    last_generated_at: str | None = None,
+    db_path: Path | None = None,
+) -> dict:
+    """Insert or update the prep guide for *interview_id* and return the row.
+
+    On insert a new UUID is generated for ``id``.  On update every supplied
+    field is overwritten and ``updated_at`` is refreshed.  ``last_generated_at``
+    is only written when explicitly provided (not None).
+    """
+    guide_id = uuid.uuid4().hex
+    with _connect(db_path) as conn:
+        if last_generated_at is not None:
+            conn.execute(
+                """
+                INSERT INTO interview_prep_guides
+                    (id, interview_id, markdown_source, generation_system_prompt,
+                     generation_user_prompt, web_search_log, thinking_summary,
+                     last_generated_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(interview_id) DO UPDATE SET
+                    markdown_source          = excluded.markdown_source,
+                    generation_system_prompt = excluded.generation_system_prompt,
+                    generation_user_prompt   = excluded.generation_user_prompt,
+                    web_search_log           = excluded.web_search_log,
+                    thinking_summary         = excluded.thinking_summary,
+                    last_generated_at        = excluded.last_generated_at,
+                    updated_at               = CURRENT_TIMESTAMP
+                """,
+                (guide_id, interview_id, markdown_source, generation_system_prompt,
+                 generation_user_prompt, web_search_log, thinking_summary,
+                 last_generated_at),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO interview_prep_guides
+                    (id, interview_id, markdown_source, generation_system_prompt,
+                     generation_user_prompt, web_search_log, thinking_summary,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(interview_id) DO UPDATE SET
+                    markdown_source          = excluded.markdown_source,
+                    generation_system_prompt = excluded.generation_system_prompt,
+                    generation_user_prompt   = excluded.generation_user_prompt,
+                    web_search_log           = excluded.web_search_log,
+                    thinking_summary         = excluded.thinking_summary,
+                    updated_at               = CURRENT_TIMESTAMP
+                """,
+                (guide_id, interview_id, markdown_source, generation_system_prompt,
+                 generation_user_prompt, web_search_log, thinking_summary),
+            )
+        row = conn.execute(
+            "SELECT * FROM interview_prep_guides WHERE interview_id = ?",
+            (interview_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def db_delete_prep_guide(
+    interview_id: str, db_path: Path | None = None,
+) -> bool:
+    """Delete the prep guide for *interview_id*. Returns True if a row was removed."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM interview_prep_guides WHERE interview_id = ?",
+            (interview_id,),
         )
     return cursor.rowcount > 0

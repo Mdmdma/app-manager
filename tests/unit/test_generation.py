@@ -994,12 +994,13 @@ def test_get_prompt_split_prompt_empty_doc_type_falls_back_to_default_arg():
 
 
 def test_get_all_prompt_defaults_returns_all_keys():
-    """get_all_prompt_defaults should return 8 keys: 2 shared + 6 typed (3 prompts x 2 doc types).
+    """get_all_prompt_defaults should return 9 keys: 3 shared + 6 typed (3 prompts x 2 doc types).
     No shared keys for generate_first, generate_revise, or analyze_quality."""
     defaults = get_all_prompt_defaults()
-    # 2 shared-only keys
+    # 3 shared-only keys (analyze_fit, analyze_compress, prep guide)
     assert "prompt_analyze_fit" in defaults
     assert "prompt_analyze_compress" in defaults
+    assert "prompt_generate_prep_guide" in defaults
     # 6 typed keys (generate_first, generate_revise, analyze_quality each have cv + cover_letter)
     assert "prompt_generate_first:cv" in defaults
     assert "prompt_generate_first:cover_letter" in defaults
@@ -1011,8 +1012,8 @@ def test_get_all_prompt_defaults_returns_all_keys():
     assert "prompt_generate_first" not in defaults
     assert "prompt_generate_revise" not in defaults
     assert "prompt_analyze_quality" not in defaults
-    # Total 8 keys
-    assert len(defaults) == 8
+    # Total 9 keys
+    assert len(defaults) == 9
 
 
 def test_get_all_prompt_defaults_values_match_constants():

@@ -1,6 +1,6 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: 3e90bf244b73 -->
+<!-- hash: a542aaf2ee04 -->
 <!-- updated: 2026-04-21 -->
 
 ## Public API
@@ -24,12 +24,19 @@
 
 ### Tabs / Views
 - Dashboard: stats row (Total, Active, Interviews, Offers) + actions bar + applications grid
-- Settings: Personal Info (default active), General, Connection, Knowledge Base, AI Models, Templates, System Prompts, Email / Gmail sections via sidebar
+- Settings: Personal Info (default active), General, Connection, Knowledge Base, AI Models, Templates, System Prompts, Email / Gmail, Outlook Calendar sections via sidebar
 - Detail: multi-step navigation (App Details, CV & Cover Letters, Extra Questions, Interviews, Offers)
 
 ### Actions Bar (`div.actions-bar`)
 - URL import form: `#import-url` input, `#import-btn` button, `#import-status` span
 - "New Application" button (`.btn.btn-primary`, calls `openNewApplicationModal()`)
+
+### New Application Modal — paste-JD top field
+- `#form-jd-group` is the first child of `.modal-body` (above Company Name)
+- Contains `<label for="form-jd-text">Paste Job Description</label>`, a helper hint, and `<textarea id="form-jd-text" rows="6">` (resize vertical)
+- On submit: if textarea is non-empty **and** `currentEditingId` is null, the form calls `POST /applications/from-text` instead of the manual create path; the LLM populates all extracted fields and the modal closes on success. If the textarea is empty, the existing manual create/update flow runs unchanged
+- `openNewApplicationModal()` clears `#form-jd-text` and restores the submit button's `disabled = false` / `textContent = "Save"` (guards against abandoned in-flight from-text requests)
+- `_syncJdRequiredFields()` — wired to `#form-jd-text` via `oninput`, also called from `openNewApplicationModal()` and `closeApplicationModal()`. When JD textarea is non-empty AND `currentEditingId` is null, strips the `required` attribute from `#form-company` and `#form-position` so the browser doesn't block the LLM-populate submit; otherwise restores `required`
 
 ### Connection Status (Header)
 Three side-by-side indicators in `.header-actions`:
@@ -70,6 +77,12 @@ Interaction:
 - Rectangle clamped to image bounds, minimum 50px wide / 20px tall
 - Dark semi-transparent overlay outside rectangle; indigo (#4f46e5) rectangle border
 CSS classes: `.rect-crop-modal-overlay`, `.rect-crop-modal`, `.rect-crop-container`, `.rect-crop-overlay-canvas`, `.rect-crop-modal-title`, `.rect-crop-modal-hint`, `.rect-crop-modal-footer`
+
+### AI Models — Web Search Enrichment toggle
+- `#search-enrichment-toggle` — checkbox inside the AI Models section, below `#ai-credentials` and above the per-step model overrides `<details>`
+- Label: "Enrich ingestion with web search (Claude only)"; helper text explains it only activates when provider is Anthropic or CLIProxy
+- Loaded from `_stored.search_enrichment_enabled` (JSON bool, defaults to `true` when key missing) in `loadAiSettings()`
+- Saved via `saveAiSettings()` which includes `search_enrichment_enabled` in the POST `/settings` body and updates `_stored.search_enrichment_enabled` on success
 
 ### Connection Settings Section (`#section-connection`)
 Four rows:
@@ -156,6 +169,86 @@ Key IDs: `#prompt-generate-first--cv`, `#prompt-generate-first--cover-letter`, e
 - `resetPrompt(key)` works for both shared and typed keys
 - Status: `#prompt-settings-msg`
 
+### Interviews Step (`#step-interviews`)
+
+Section header row contains two buttons:
+- `+ From Email` (`.btn.btn-secondary.btn-sm`, calls `openEmailIngestModal()`)
+- `+ Add Round` (`.btn.btn-primary.btn-sm`, calls `_ivAdd()`)
+
+Interview card body (`_ivMakeCard`) includes a new **Links** section between the
+Location/Confidence row and the Preparation heading:
+- `.iv-links-preview` — div of clickable `<a target="_blank" rel="noopener">` anchors (rebuilt on input)
+- `.iv-links` — textarea, one URL per line; `oninput` calls both `_ivScheduleSave(this)` and `_ivUpdateLinksPreview(this)`
+- `_ivSave` includes `links: ...` in the PUT body
+
+### Interview Preparation Guide Section (inside expanded interview card)
+
+Appended to `.eq-card-body` at the end of `_ivMakeCard` via `_pgMakeSection(item.id)`. Structure:
+- **Header row** (`.prep-guide-header`) — title "Preparation guide", "Generate"/"Regenerate" button (`data-pg-btn-generate`), "Edit" toggle (`data-pg-btn-edit`), `.prep-guide-last-gen` timestamp span.
+- **Inline error banner** (`.prep-guide-error`, hidden by default).
+- **Progress tracker** (`.prep-guide-progress`) — reuses existing `.gen-progress-step` / `.gen-progress-sep` / `.step-icon` classes. Three steps: Load context → Research & reason → Save.
+- **Body** (`.prep-guide-body`) — either `.prep-guide-empty` placeholder, `.prep-guide-markdown` rendered view, or `.prep-guide-textarea` edit mode.
+- **Three `<details>` collapsibles** under `.prep-guide-collapsibles`: View prompts, Web searches used, Model reasoning.
+
+**Provider gate**: generate button is disabled with a tooltip when `settings.llm_provider not in ("anthropic","cliproxy")`. `_pgCheckProvider()` fetches `GET /settings` once per page load, caches result in module-level `_PREP_GUIDE_PROVIDER_OK`, and updates all generate buttons via `_pgApplyProviderState`.
+
+**SSE client** (`_pgGenerate`) POSTs `{}` to `/interviews/{id}/prep-guide/generate`, streams `data: <json>\n\n` frames, dispatches progress events to the tracker, and on the final `{node:"done"}` event refreshes state, re-renders the markdown view, and populates the collapsibles.
+
+**Flashcard rendering** — inline markdown renderer (`_pgRenderMarkdown`) extracts ```flashcard fenced blocks with a regex, splits `Q:`/`A:` lines, and emits `.flashcard` flip-card components (CSS 3D transform, click to toggle `.flipped`). The remaining markdown is passed through `_pgRenderMd` (a ~50-line inline renderer supporting headings, bold/italic, inline code, fenced code, links, and lists).
+
+**Edit mode** (`_pgToggleEdit`) swaps the rendered view for a textarea; on input, `_pgScheduleSave` debounces 800ms and calls `_pgSaveNow()` which PUTs `{markdown}` and flashes a `.prep-guide-saved-msg` indicator. The existing `prep_notes` textarea in the Preparation section is untouched; the prep guide is a separate, richer field.
+
+**State cache**: per-interview state dict (`_pgState`) with `loaded`, `markdown`, `lastGeneratedAt`, `systemPrompt`, `userPrompt`, `searchLog` (parsed list), `thinking`, `isGenerating`, `editMode`, `debounceTimer`. Fetched once on first card expand via `_pgLoadOnce(card, ivId)`. Reset alongside other application-scoped state in `openDetailPage` (`_pgState = {}`, `_PREP_GUIDE_PROVIDER_OK = null`).
+
+### Outlook Calendar Settings Section (`#section-ms-graph`)
+Sibling to the Gmail settings section in the sidebar (new `<li>` nav entry after Gmail). Structure mirrors Gmail:
+- Status dot (`#ms-graph-status-dot`, `.connection-dot.disconnected` by default) + status text (`#ms-graph-status-text`). When connected, the `user_email` is shown in muted text next to the label.
+- Status message region (`#ms-graph-settings-msg`) for inline feedback.
+- Three action buttons:
+  - `#ms-graph-connect-btn` "Connect Outlook" — visible only when disconnected; calls `_msGraphConnect()` which hits `GET /api/v1/ms_graph/auth-url` and `window.location.href = data.url`.
+  - `#ms-graph-disconnect-btn` "Disconnect" — visible only when connected; `confirm()` then `POST /api/v1/ms_graph/disconnect` → reload status.
+  - `#ms-graph-sync-btn` "Sync all" — visible only when connected; `POST /api/v1/ms_graph/sync`; displays `"Synced N interviews (M errors)."` in the status region. Button disabled during the in-flight request.
+- OAuth callback return handling: on `DOMContentLoaded`, if `?ms_graph_connected=1` is present in the URL, `history.replaceState` cleans it up, the settings view is activated, `switchSettingsSection('ms-graph')` is called, status is reloaded, and a 4-second success toast is shown.
+
+### Interview round card — Outlook sync badge
+Rendered inside `_ivMakeCard()` in the card action row (after `statusBadge`, before the delete button): when `item.graph_event_id` is a non-empty string, a `<span class="iv-sync-badge iv-sync-ok" title="Synced to Outlook">✓ Outlook</span>` pill is appended. Renders nothing when `graph_event_id` is null/empty. Binary state only — pending/error states are not exposed (backend BackgroundTasks are fire-and-forget; errors are logged server-side only).
+
+CSS:
+- `.iv-sync-badge` — inline-flex pill, `0.72rem` font, small padding, rounded.
+- `.iv-sync-ok` — green from design-system tokens: `#d1fae5` background, `#065f46` text.
+
+### Email Ingest Modal (`#email-ingest-modal`)
+
+Lazy-opened modal (sibling to `#app-modal`) triggered from the Interviews tab.
+Structure:
+- Header: "Paste Email — Auto-Fill" + close X
+- Body: short instruction + `#email-ingest-text` (monospace textarea, 200px min-height, resize:vertical) + `#email-ingest-status` (`.status-msg`, hidden by default)
+- Footer: Cancel + `#email-ingest-submit` ("Extract & Save")
+
+Submit flow (`submitEmailIngest`): POSTs to `/applications/{id}/email/ingest`.
+Branches on response `kind`:
+- `interview_invite` → close modal, `_ivLoad()`, auto-expand newest card
+- `rejection` → close modal, `switchDetailStep("details")`, `_rjLoad()`, flash green outline
+- HTTP 4xx → display `detail` (string or `{message, extraction}`) in `#email-ingest-status`; modal stays open
+
+### Rejection Panel (`#rejection-panel`, inside `#step-app-details`)
+
+Hidden by default (`display:none`); shown by `_rjRender()` when `_rjRecord` is
+set. Placement: appended after `#detail-full-text-section`.
+
+- Section header row: "Outcome — Rejection" (red `#dc2626`) + trash Delete button → `_rjDelete()`
+- Fields (all debounced-save via `_rjScheduleSave(this)`):
+  - `.rj-summary` (textarea)
+  - `.rj-reasons` (textarea)
+  - `.rj-links-preview` (anchor div) + `.rj-links` (textarea, one URL per line)
+  - `.rj-received_at` (date input)
+  - `.rj-followup_status` (select: `none` / `contacted` / `responded` / `closed`) — placeholder for future reach-back feature
+  - `.rj-followup_notes` (textarea) — placeholder for future feature
+  - `<details>` "Original Email" containing readonly `.rj-raw_email` textarea
+
+Module state: `var _rjLoaded = false; var _rjSaveTimer = null; var _rjRecord = null;`
+Reset in `openDetailPage()`. `switchDetailStep("app-details")` calls `_rjLoad()` once (guarded by `_rjLoaded`).
+
 ### CSS Classes (from shared design system)
 - Buttons: `.btn`, `.btn-primary`, `.btn-secondary`, `.btn-danger`, `.btn-sm`, `.btn-green`
 - Badges: `.badge`, `.badge-applied`, `.badge-screening`, `.badge-interviewing`, `.badge-offered`, `.badge-rejected`, `.badge-accepted`, `.badge-withdrawn`
@@ -184,6 +277,7 @@ Key IDs: `#prompt-generate-first--cv`, `#prompt-generate-first--cover-letter`, e
 - `handleApplicationFormSubmit(event)` — POST or PUT to `/applications[/:id]`
 - `handleDelete()` — DELETE `/applications/:id` with confirmation
 - `importFromUrl()` — POST `/applications/from-url` with `{url}`, updates status span, reloads list
+- `handleApplicationFormSubmit(event)` — reads `#form-jd-text`; if non-empty **and** creating (not editing), POSTs `{text}` to `/applications/from-text` with submit button disabled + "Extracting…" label, then closes modal + `loadApplications()` on success or shows error in `#form-message`; otherwise falls through to the manual create/update path unchanged
 - `switchToSettings()` / `switchToDashboard()` — toggle main views
 - `switchSettingsSection(section)` — activate settings sidebar section
 - `checkKbConnection()` — GET `/health`, updates jam, kb, and proxy header/settings indicators
@@ -208,6 +302,10 @@ Key IDs: `#prompt-generate-first--cv`, `#prompt-generate-first--cover-letter`, e
 - `saveGmailCredentials()` — POST `/settings` with Gmail OAuth credentials
 - `connectGmail()` — GET `/gmail/auth-url`, opens auth URL in new window
 - `disconnectGmail()` — POST `/gmail/disconnect`
+- `_msGraphLoadStatus()` — GET `/ms_graph/status`; toggles `.connection-dot.disconnected` / `.connected`, writes status text with `user_email`, toggles visibility of Connect/Disconnect/Sync-all buttons
+- `_msGraphConnect()` — GET `/ms_graph/auth-url` → same-tab `window.location.href = data.url` (confidential-client flow; callback lands at `/ms_graph/callback` then redirects to `/?ms_graph_connected=1`)
+- `_msGraphDisconnect()` — `confirm()` dialog → POST `/ms_graph/disconnect` → reload status; the server clears every `interview_rounds.graph_event_id` and reports `rounds_cleared`
+- `_msGraphSyncAll()` — POST `/ms_graph/sync`; reports `{synced, errors}` in `#ms-graph-settings-msg`; button disabled during flight
 - `openDetailPage(appId)` — loads application, resets doc state, shows detail view
 - `switchDetailStep(step)` — activates detail step panel; lazy-loads CV docs on first visit; toggles `.no-outer-scroll` on `.detail-content` (added for cv-cover, removed for other steps)
 - `_switchDocTab(docType)` — switches between cv/cover_letter document tabs
@@ -240,6 +338,31 @@ Key IDs: `#prompt-generate-first--cv`, `#prompt-generate-first--cover-letter`, e
 - `_hideGenProgress(docType)` — hides and clears the tracker
 - `_setDocStatus(docType, msg, cls)` — updates status span; clears after 3s on success
 - `_togglePane(containerId, paneIndex)` — collapses/expands a trisplit pane
+- `openEmailIngestModal()` — clears `#email-ingest-text` + `#email-ingest-status`, resets submit button, shows `#email-ingest-modal`; requires `currentDetailId`
+- `closeEmailIngestModal()` — hides `#email-ingest-modal`
+- `submitEmailIngest()` — POST `/applications/{currentDetailId}/email/ingest` with `{ email_text }`; button label toggles to "Extracting…" during flight. On `kind === "interview_invite"`: close modal, `_ivLoad()`, auto-expand newest card. On `kind === "rejection"`: close modal, `switchDetailStep("details")`, `await _rjLoad()`, flash success. On 4xx: parse JSON `detail` (string or `{message, extraction}`), show in `#email-ingest-status`, keep modal open.
+- `_ivUpdateLinksPreview(el)` — rebuilds `.iv-links-preview` anchors from textarea value (newline-split, escaped). Called from interview card `.iv-links` `oninput` handler.
+- `_rjLoad()` — GET `/applications/{id}/rejections`; stores first item in `_rjRecord`; calls `_rjRender()`
+- `_rjRender()` — hides `#rejection-panel` if `_rjRecord` null; otherwise populates all `.rj-*` fields + rebuilds links-preview and shows panel
+- `_rjUpdateLinksPreview(el)` — rebuilds `.rj-links-preview` anchors
+- `_rjScheduleSave(el)` — 2 s debounce → `_rjSave`
+- `_rjSave()` — PUT `/rejections/{_rjRecord.id}` with current field values; updates `_rjRecord` from response
+- `_rjDelete()` — confirm → DELETE `/rejections/{id}` → clears `_rjRecord` → `_rjRender()`
+- `_pgGetState(ivId)` / `_pgMakeSection(ivId)` / `_pgFindSection(ivId)` — build and locate the per-interview prep-guide DOM; lazy state object with `loaded`, `markdown`, `lastGeneratedAt`, `systemPrompt`, `userPrompt`, `searchLog`, `thinking`, `isGenerating`, `editMode`, `debounceTimer`
+- `_pgLoadOnce(card, ivId)` — GET `/interviews/{id}/prep-guide` once per expand (guarded by `state.loaded`); applies response into state
+- `_pgCheckProvider()` — GET `/settings` once per page; caches `_PREP_GUIDE_PROVIDER_OK` based on `llm_provider in ("anthropic","cliproxy")`; calls `_pgApplyProviderState` on every generate button
+- `_pgApplyProviderState(btn)` — disables button + sets tooltip when provider not supported
+- `_pgApplyResponse(ivId, data)` — stores a `PrepGuideResponse` dict into state, triggers `_pgRender`
+- `_pgRender(ivId)` — full re-render of section: button labels (Generate vs Regenerate), last-gen timestamp, body shows empty / markdown / textarea per mode
+- `_pgRenderCollapsibles(ivId, section, state)` — rebuilds the three `<details>` blocks (View prompts, Web searches used, Model reasoning)
+- `_pgToggleEdit(ivId)` — swap between view and edit; PUTs on leaving edit if content changed
+- `_pgScheduleSave(ivId)` / `_pgSaveNow(ivId)` — 800 ms debounce → PUT `/interviews/{id}/prep-guide` with `{markdown}`; flashes `.prep-guide-saved-msg.visible`
+- `_pgSetError(ivId, msg)` — shows/hides `.prep-guide-error` banner
+- `_pgInitProgress(ivId)` / `_pgUpdateProgress(ivId, node)` / `_pgCompleteProgress(ivId)` / `_pgErrorProgress(ivId)` / `_pgHideProgress(ivId)` — progress tracker management (mirrors `_initGenProgress` / `_updateGenProgress` ... for three steps: Load context → Research & reason → Save)
+- `_pgGenerate(ivId)` — POST `{}` to `/interviews/{id}/prep-guide/generate`, reads SSE stream, dispatches progress events; on `{node:"done"}` event updates state (markdown, prompts, search log, thinking) and re-renders
+- `_pgRenderMarkdown(md)` — extracts ```flashcard fenced blocks (regex), feeds rest through `_pgRenderMd`, stitches the flashcard flip-card components back in at the correct positions
+- `_pgRenderFlashcard(text)` — parses `Q:`/`A:` lines and emits `.flashcard` DOM with click-to-flip behaviour
+- `_pgRenderMd(text)` — ~50-line inline markdown renderer: headings (`#..######`), `**bold**`, `*italic*`, inline ``code``, fenced ```code```, `[text](url)`, `-` and `1.` lists, paragraphs; escapes HTML first
 - `openCropModal(dataUri, previewId, settingKey)` — opens circular crop modal for profile photo
 - `closeCropModal()` — closes crop modal, cleans up listeners
 - `applyCrop()` — exports circular-cropped PNG and updates preview/stored

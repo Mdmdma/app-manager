@@ -1,7 +1,7 @@
 # generation Knowledge
 <!-- source: jam/generation.py -->
-<!-- hash: 90e8b0a26a41 -->
-<!-- updated: 2026-04-02 -->
+<!-- hash: 60ee30d8f98a -->
+<!-- updated: 2026-04-21 -->
 
 ## Public API
 
@@ -16,7 +16,12 @@
 | `analyze_quality` | `async (state) -> dict` | LLM: check for AI phrases, vague claims, grammar |
 | `analyze_compress` | `async (state) -> dict` | LLM: recommend compression if page_count > 1; no-op if <= 1 |
 | `finalize` | `async (state) -> dict` | Terminal node: copy current_latex to final_latex |
-| `get_all_prompt_defaults` | `() -> dict[str, str]` | Return all 11 prompt defaults (shared + doc-type-specific) for API |
+| `get_all_prompt_defaults` | `() -> dict[str, str]` | Return all 9 prompt defaults (shared + doc-type-specific + prep guide) for API |
+| `build_prep_guide_graph` | `() -> CompiledGraph` | Build the interview prep-guide LangGraph (linear: load_context → generate_guide → finalize) |
+| `load_context` | `async (state, settings=None) -> dict` | Fetch KB docs + trim to 6000 chars (prep-guide variant of retrieve_kb_docs) |
+| `generate_guide` | `async (state, settings=None) -> dict` | Call `llm_call_with_trace` with web_search tool (100 uses) + extended thinking |
+| `finalize_prep_guide` | `async (state, settings=None) -> dict` | Persist markdown + trace to `interview_prep_guides` via `db_upsert_prep_guide` |
+| `run_prep_guide_graph` | `async (initial_state, settings=None) -> AsyncIterator[dict]` | SSE entry point for prep-guide generation; yields progress events + final `done` event |
 
 ### Internal helpers
 
@@ -33,6 +38,8 @@
 | `_compile_latex_bytes(latex, images?)` | Run tectonic subprocess, return PDF bytes |
 | `_pdf_page_count(pdf_bytes)` | Count pages using pymupdf/fitz |
 | `_route_after_compile(state)` | Conditional router: compact loop, parallel analysis fan-out, or END on error |
+| `_parse_prep_guide_model(settings)` | Parse `step_model_generate_prep_guide` (`"provider:model"`) → `(provider, model)` |
+| `_parse_namespaces(raw)` | JSON-decode a namespace list string, returning `[]` on error |
 
 ## Key Constants / Schema
 
@@ -51,6 +58,7 @@
 |---|---|---|
 | `PROMPT_ANALYZE_FIT` | `prompt_analyze_fit` | (none) |
 | `PROMPT_ANALYZE_COMPRESS` | `prompt_analyze_compress` | `{page_count}`, `{compact_iteration}`, `{max_compact_iterations}`, `{locked_sections_notice}` |
+| `PROMPT_GENERATE_PREP_GUIDE` | `prompt_generate_prep_guide` | (none) — scaffold for interview prep guide markdown, instructs the model to use web_search + extended thinking to produce 9 sections including `flashcard` fenced blocks |
 
 **Doc-type-specific prompts (6 constants, no shared fallback):**
 
@@ -71,9 +79,9 @@ Doc-type prompts enforce: only use retrieved KB information, avoid AI-sounding t
 
 **`_PROMPT_DEFAULTS`** dict maps 3 base keys to `{doc_type: constant}` for the split prompts only.
 
-**`get_all_prompt_defaults()`** — public helper returning all 8 keys (2 shared + 6 typed) for the API.
+**`get_all_prompt_defaults()`** — public helper returning all 9 keys (3 shared + 6 typed) for the API. The 9th key is `prompt_generate_prep_guide`.
 
-Per-step model override keys: `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_analyze_compress`
+Per-step model override keys: `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_analyze_compress`, `step_model_generate_prep_guide`
 
 ### `DocumentGenerationState` TypedDict
 
@@ -129,6 +137,16 @@ retrieve_kb_docs -> generate_or_revise -> compile_and_check
 analyze_fit -> analyze_quality -> finalize -> END
 ```
 
+**Prep-guide graph (separate, linear):**
+```
+load_context -> generate_guide -> finalize_prep_guide -> END
+```
+
+- Single LLM call in `generate_guide` using `llm_call_with_trace` (from `jam.llm`) with `tools=[_web_search_tool(max_uses=settings.prep_guide_max_web_searches)]` (default 100) and `thinking_budget=settings.prep_guide_thinking_budget` (default 16000).
+- Gated on `llm_provider in ("anthropic","cliproxy")` — other providers raise `ValueError` at the `llm_call_with_trace` boundary. `generate_guide` also has a defensive check and writes to `state["error"]` instead of propagating.
+- Model can be overridden via `step_model_generate_prep_guide` (format `"provider:model"`).
+- `finalize_prep_guide` calls `db_upsert_prep_guide(interview_id, markdown_source, generation_system_prompt, generation_user_prompt, web_search_log=json.dumps(search_log), thinking_summary, last_generated_at=datetime.utcnow().isoformat())`.
+
 ### Node details
 
 - `retrieve_kb_docs`: 3-tier settings cascade (DB -> Settings env -> hardcoded defaults) for KB config. Over-fetches by padding, deduplicates by doc_id. **Skips calls entirely when their namespace list is empty** — only builds coroutines for configured sources. Uses `asyncio.gather()` to run whichever of `search_documents` / `list_namespace_documents` are needed concurrently (with `return_exceptions=True`).
@@ -139,15 +157,37 @@ analyze_fit -> analyze_quality -> finalize -> END
 - `analyze_compress`: Skips LLM call when `page_count <= 1`. Otherwise provides text recommendations for compression. Increments `compact_iteration`. Escalates aggressiveness: standard on pass 1, "be more aggressive" on pass 2, "FINAL ATTEMPT" on pass 3+.
 - `finalize`: Sets `final_latex` from `current_latex`.
 
+### `PrepGuideState` TypedDict (total=False)
+
+Inputs set by caller: `interview_id`, `application_id`, `job_description`, `company`, `position`, `round_type`, `round_number`, `interviewer_names`, `interview_links`, `interview_prep_notes`, `scheduled_at`, `cv_latex`, `cover_letter_latex`.
+
+Populated by nodes: `kb_docs`, `kb_context_text` (trimmed 6000), `markdown`, `thinking`, `search_log`, `generation_system_prompt`, `generation_user_prompt`, `progress_events` (Annotated accumulator), `error`.
+
+### `run_prep_guide_graph` SSE event shape
+
+Each node emits one or more progress events; final event:
+
+```python
+{
+    "node": "done",
+    "markdown": str,
+    "generation_system_prompt": str,
+    "generation_user_prompt": str,
+    "web_search_log": str,        # JSON-encoded list[{query, url, title}]
+    "thinking_summary": str,
+    "error": str | None,
+}
+```
+
 ## Dependencies
 
-- Imports from: `jam.config` (Settings), `jam.db` (get_all_settings -- lazy), `jam.llm` (llm_call -- lazy), `jam.kb_client` (search_documents, list_namespace_documents -- lazy), `langgraph` (StateGraph, END -- lazy), `fitz` (pymupdf)
-- Imported by: `jam/server.py` (generation_graph, critique_graph, prompt constants)
+- Imports from: `jam.config` (Settings), `jam.db` (get_all_settings, db_upsert_prep_guide -- lazy), `jam.llm` (llm_call, llm_call_with_trace, _web_search_tool -- lazy), `jam.kb_client` (search_documents, list_namespace_documents -- lazy), `langgraph` (StateGraph, END -- lazy), `fitz` (pymupdf)
+- Imported by: `jam/server.py` (generation_graph, critique_graph, prompt constants, `run_prep_guide_graph`, `PrepGuideState`)
 
 ## Testing
 
-- File: `tests/unit/test_generation.py`
-- Mock targets: `jam.generation.llm_call`, `jam.generation.get_all_settings`, `jam.generation.search_documents`, `jam.generation.list_namespace_documents`, `jam.generation._compile_latex_bytes`, `jam.generation._pdf_page_count`, `shutil.which`
+- Files: `tests/unit/test_generation.py`, `tests/unit/test_generation_prep_guide.py`
+- Mock targets: `jam.generation.llm_call`, `jam.generation.llm_call_with_trace`, `jam.generation.get_all_settings`, `jam.generation.search_documents`, `jam.generation.list_namespace_documents`, `jam.generation._compile_latex_bytes`, `jam.generation._pdf_page_count`, `jam.generation.db_upsert_prep_guide`, `shutil.which`
 - Pattern: Each test constructs a `_base_state()` dict, patches LLM/KB calls, and asserts on returned state updates
 
 ## Known Limitations
@@ -157,3 +197,5 @@ analyze_fit -> analyze_quality -> finalize -> END
 - Per-node exception swallowing -- LLM nodes return partial state rather than raising
 - Compact loop runs up to 3 iterations per pipeline invocation (configurable via `max_compact_iterations`)
 - Graph compiled at import time -- langgraph must be importable
+- Prep-guide pipeline is Anthropic/cliproxy-only (needs server-side `web_search_20250305` tool + extended thinking). Server must gate the generate endpoint on `llm_provider` before invoking.
+- Prep-guide KB context uses the same 6000-char cap as CV/CL.

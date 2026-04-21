@@ -27,11 +27,30 @@ class Settings:
     gmail_client_secret: str = field(default_factory=lambda: os.getenv("GMAIL_CLIENT_SECRET", ""))
     gmail_refresh_token: str = field(default_factory=lambda: os.getenv("GMAIL_REFRESH_TOKEN", ""))
     gmail_user_email: str = field(default_factory=lambda: os.getenv("GMAIL_USER_EMAIL", ""))
+    # Microsoft Graph (Outlook Calendar) OAuth settings
+    ms_graph_client_id: str = field(default_factory=lambda: os.getenv("MS_GRAPH_CLIENT_ID", ""))
+    ms_graph_client_secret: str = field(default_factory=lambda: os.getenv("MS_GRAPH_CLIENT_SECRET", ""))
+    ms_graph_tenant: str = field(default_factory=lambda: os.getenv("MS_GRAPH_TENANT", "common"))
+    ms_graph_redirect_uri: str = field(default_factory=lambda: os.getenv("MS_GRAPH_REDIRECT_URI", "http://localhost:8001/ms_graph/callback"))
+    ms_graph_refresh_token: str = field(default_factory=lambda: os.getenv("MS_GRAPH_REFRESH_TOKEN", ""))
+    ms_graph_access_token: str = field(default_factory=lambda: os.getenv("MS_GRAPH_ACCESS_TOKEN", ""))
+    ms_graph_token_expires_at: str = field(default_factory=lambda: os.getenv("MS_GRAPH_TOKEN_EXPIRES_AT", ""))
+    ms_graph_user_email: str = field(default_factory=lambda: os.getenv("MS_GRAPH_USER_EMAIL", ""))
+    ms_graph_calendar_id: str = field(default_factory=lambda: os.getenv("MS_GRAPH_CALENDAR_ID", ""))
+    # Calendar settings
+    calendar_timezone: str = field(default_factory=lambda: os.getenv("JAM_CALENDAR_TIMEZONE", "UTC"))
+    calendar_default_duration_minutes: int = field(
+        default_factory=lambda: int(os.getenv("JAM_CALENDAR_DEFAULT_DURATION_MINUTES", "60"))
+    )
     # KB retrieval settings
     kb_retrieval_namespaces: str = field(default_factory=lambda: os.getenv("JAM_KB_RETRIEVAL_NAMESPACES", ""))
     kb_retrieval_n_results: int = field(default_factory=lambda: int(os.getenv("JAM_KB_RETRIEVAL_N_RESULTS", "5")))
     kb_retrieval_padding: int = field(default_factory=lambda: int(os.getenv("JAM_KB_RETRIEVAL_PADDING", "0")))
     kb_include_namespaces: str = field(default_factory=lambda: os.getenv("JAM_KB_INCLUDE_NAMESPACES", ""))
+    # Search enrichment
+    search_enrichment_enabled: bool = field(
+        default_factory=lambda: os.getenv("JAM_SEARCH_ENRICHMENT_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+    )
     # Personal info (PDF metadata)
     personal_full_name: str = field(default_factory=lambda: os.getenv("JAM_PERSONAL_FULL_NAME", ""))
     personal_email: str = field(default_factory=lambda: os.getenv("JAM_PERSONAL_EMAIL", ""))
@@ -40,3 +59,16 @@ class Settings:
     personal_address: str = field(default_factory=lambda: os.getenv("JAM_PERSONAL_ADDRESS", ""))
     personal_photo: str = field(default_factory=lambda: os.getenv("JAM_PERSONAL_PHOTO", ""))
     personal_signature: str = field(default_factory=lambda: os.getenv("JAM_PERSONAL_SIGNATURE", ""))
+    # Interview prep guide generation settings
+    prompt_generate_prep_guide: str = field(
+        default_factory=lambda: os.getenv("JAM_PROMPT_GENERATE_PREP_GUIDE", "")
+    )
+    prep_guide_max_web_searches: int = field(
+        default_factory=lambda: int(os.getenv("JAM_PREP_GUIDE_MAX_WEB_SEARCHES", "100"))
+    )
+    prep_guide_thinking_budget: int = field(
+        default_factory=lambda: int(os.getenv("JAM_PREP_GUIDE_THINKING_BUDGET", "16000"))
+    )
+    step_model_generate_prep_guide: str = field(
+        default_factory=lambda: os.getenv("JAM_STEP_MODEL_GENERATE_PREP_GUIDE", "")
+    )

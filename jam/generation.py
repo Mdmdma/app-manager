@@ -4,6 +4,9 @@ Orchestrates CV and cover-letter generation through a multi-node graph:
   retrieve_kb_docs → generate_or_revise → compile_and_check
   → fan-out: [analyze_fit || analyze_quality || analyze_compress]
   → finalize
+
+Also contains a separate interview prep-guide pipeline:
+  load_context → generate_guide → finalize_prep_guide
 """
 
 from __future__ import annotations
@@ -17,7 +20,8 @@ import re
 import shutil
 import tempfile
 from collections import defaultdict
-from typing import Annotated, TypedDict
+from datetime import datetime, timezone
+from typing import Annotated, AsyncIterator, TypedDict
 
 import fitz  # pymupdf
 
@@ -216,6 +220,7 @@ def get_all_prompt_defaults() -> dict[str, str]:
     result = {
         "prompt_analyze_fit": PROMPT_ANALYZE_FIT,
         "prompt_analyze_compress": PROMPT_ANALYZE_COMPRESS,
+        "prompt_generate_prep_guide": PROMPT_GENERATE_PREP_GUIDE,
     }
     for key, typed in _PROMPT_DEFAULTS.items():
         for doc_type, prompt in typed.items():
@@ -899,3 +904,437 @@ def build_critique_graph():
 
 
 critique_graph = build_critique_graph()
+
+
+# ===========================================================================
+# Interview Prep-Guide Pipeline
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+
+
+class PrepGuideState(TypedDict, total=False):
+    # ── Inputs (set by caller before invoking graph) ─────────────────────────
+    interview_id: str
+    application_id: str
+    job_description: str
+    company: str
+    position: str
+    round_type: str
+    round_number: int
+    interviewer_names: str
+    interview_links: str           # newline-separated URLs
+    interview_prep_notes: str      # existing prep_notes textarea content
+    scheduled_at: str
+    cv_latex: str
+    cover_letter_latex: str
+
+    # ── Populated by nodes ───────────────────────────────────────────────────
+    kb_docs: list[dict]
+    kb_context_text: str           # trimmed to 6000 chars
+
+    # ── LLM outputs ─────────────────────────────────────────────────────────
+    markdown: str
+    thinking: str
+    search_log: list[dict]
+    generation_system_prompt: str
+    generation_user_prompt: str
+
+    # ── Progress / error ─────────────────────────────────────────────────────
+    error: str
+    progress_events: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Hardcoded default prompt
+# ---------------------------------------------------------------------------
+
+PROMPT_GENERATE_PREP_GUIDE = """\
+You are an expert interview coach preparing a candidate for a specific interview round.
+
+Your task: given the job description, candidate's CV, cover letter, interview-round \
+metadata, and KB context, produce a comprehensive markdown preparation guide.
+
+You have access to a web_search tool with a generous budget. Use it aggressively to \
+gather current, accurate information about:
+- The company (products, recent news, culture, team size, funding)
+- The field or domain relevant to the role
+- Specific projects, technologies, or frameworks named in the job description or CV
+- The interviewer(s) if they appear in the provided links (LinkedIn, company bios, etc.)
+
+You are given an extended thinking budget. Before writing the final answer:
+1. Plan which searches will give the best coverage
+2. Execute searches and read the results carefully
+3. Draft the guide
+4. CRITIQUE your draft for coherence, accuracy, completeness, and relevance
+5. Revise before finalising
+
+Output MUST be valid markdown with the following sections (use `##` headings):
+
+## Overview
+Interview type, who the candidate is meeting, what they are likely optimising for.
+
+## Company & field background
+Grounded in your web search findings. Cite URLs inline as `[text](url)`.
+
+## Likely question types
+5–10 example questions per major category, conditioned on the round type. Include \
+phone-screen icebreakers OR technical deep-dives OR behavioral questions OR \
+hiring-manager-style questions as appropriate.
+
+## Your talking points
+Projects and experiences from the CV to emphasise, tied to specific requirements in \
+the job description. Refer to the candidate in the second person ("you").
+
+## Technical flashcards
+One fenced block per acronym, framework, concept, or domain term the candidate \
+should be able to articulate clearly. Format EXACTLY:
+
+```flashcard
+Q: <question>
+A: <concise answer, 1–3 sentences>
+```
+
+Generate flashcards liberally (10+ minimum) — this is the most valuable section.
+
+## Behavioral stories (STAR)
+If the round type is behavioral, hiring_manager, or panel: outline 3–5 STAR stories \
+drawing from CV bullet points. Each story: Situation, Task, Action, Result — one short \
+paragraph per component.
+
+## Interviewer notes
+If links contain LinkedIn or company profile URLs, note what you found about the \
+interviewers (role, background, areas of interest).
+
+## Questions to ask them
+5–8 tailored questions specific to the company and role.
+
+## Self-review
+One short paragraph confirming the guide is coherent, well-covered, and noting any \
+gaps the candidate should research manually before the interview."""
+
+
+# ---------------------------------------------------------------------------
+# Prep guide nodes
+# ---------------------------------------------------------------------------
+
+
+def _parse_prep_guide_model(settings: Settings) -> tuple[str | None, str | None]:
+    """Parse step_model_generate_prep_guide into (provider, model) or (None, None)."""
+    raw = (settings.step_model_generate_prep_guide or "").strip()
+    if not raw:
+        return None, None
+    parts = raw.split(":", 1)
+    if len(parts) != 2:
+        return None, None
+    return parts[0], parts[1]
+
+
+def _parse_namespaces(raw: str) -> list[str]:
+    """Parse a JSON list of namespace IDs from a string, returning [] on error."""
+    try:
+        return json.loads(raw or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+async def load_context(state: PrepGuideState, settings: Settings | None = None) -> dict:
+    """Fetch KB documents for the interview prep-guide pipeline."""
+    settings = settings or Settings()
+    from jam.kb_client import list_namespace_documents, search_documents
+
+    query = (state.get("job_description") or "")[:500]
+
+    search_ns = _parse_namespaces(settings.kb_retrieval_namespaces)
+    include_ns = _parse_namespaces(settings.kb_include_namespaces)
+    n_results = settings.kb_retrieval_n_results
+    padding = settings.kb_retrieval_padding
+
+    search_coro = (
+        search_documents(
+            query,
+            n_results=n_results + padding,
+            namespace_ids=search_ns,
+            settings=settings,
+        )
+        if search_ns
+        else None
+    )
+    list_coro = (
+        list_namespace_documents(include_ns, settings=settings)
+        if include_ns
+        else None
+    )
+
+    coros = [c for c in (search_coro, list_coro) if c is not None]
+    if coros:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+    else:
+        results = []
+
+    idx = 0
+    if search_coro is not None:
+        search_results = results[idx]
+        if isinstance(search_results, BaseException):
+            logger.warning("Prep guide: KB semantic search failed: %s", search_results)
+            search_results = []
+        idx += 1
+    else:
+        search_results = []
+
+    if list_coro is not None:
+        include_docs = results[idx]
+        if isinstance(include_docs, BaseException):
+            logger.warning("Prep guide: KB include namespace fetch failed: %s", include_docs)
+            include_docs = []
+    else:
+        include_docs = []
+
+    search_results = search_results[:n_results]
+
+    seen_ids: set[str] = set()
+    merged: list[dict] = []
+    for doc in include_docs:
+        doc_id = doc.get("doc_id") or doc.get("id", "")
+        if doc_id and doc_id not in seen_ids:
+            seen_ids.add(doc_id)
+        merged.append(doc)
+    for doc in search_results:
+        doc_id = doc.get("doc_id") or doc.get("id", "")
+        if not doc_id or doc_id not in seen_ids:
+            if doc_id:
+                seen_ids.add(doc_id)
+            merged.append(doc)
+
+    kb_context_text = "\n\n".join(_extract_kb_doc_content(d) for d in merged)[:6000]
+
+    return {
+        "kb_docs": merged,
+        "kb_context_text": kb_context_text,
+        "progress_events": [{"node": "load_context", "status": "ok"}],
+    }
+
+
+async def generate_guide(state: PrepGuideState, settings: Settings | None = None) -> dict:
+    """Generate the markdown prep guide via llm_call_with_trace."""
+    settings = settings or Settings()
+    from jam.llm import _web_search_tool, llm_call_with_trace
+
+    # Resolve provider/model
+    resolved_provider, resolved_model = _parse_prep_guide_model(settings)
+    if resolved_provider is None:
+        resolved_provider = settings.llm_provider or None
+        resolved_model = settings.llm_model or None
+
+    if resolved_provider not in ("anthropic", "cliproxy"):
+        return {
+            "error": (
+                f"prep guide generation requires provider 'anthropic' or 'cliproxy', "
+                f"got '{resolved_provider}'"
+            ),
+            "progress_events": [
+                {"node": "generate_guide", "status": "error",
+                 "detail": f"unsupported provider: {resolved_provider}"}
+            ],
+        }
+
+    # Build prompts
+    system_prompt = _get_prompt(
+        "prompt_generate_prep_guide", PROMPT_GENERATE_PREP_GUIDE, doc_type=""
+    )
+
+    round_num = state.get("round_number") or ""
+    user_prompt_parts = [
+        f"=== JOB DESCRIPTION ===\n{state.get('job_description') or '(none)'}",
+        f"=== COMPANY ===\n{state.get('company') or '(none)'}",
+        f"=== POSITION ===\n{state.get('position') or '(none)'}",
+        (
+            "=== INTERVIEW ROUND ===\n"
+            f"Type: {state.get('round_type') or '(unknown)'}\n"
+            f"Round number: {round_num}\n"
+            f"Scheduled: {state.get('scheduled_at') or '(not scheduled)'}\n"
+            f"Interviewers: {state.get('interviewer_names') or '(unknown)'}\n"
+            f"Links:\n{state.get('interview_links') or '(none)'}\n"
+            f"Prep notes:\n{state.get('interview_prep_notes') or '(none)'}"
+        ),
+        f"=== CANDIDATE CV (LaTeX) ===\n{state.get('cv_latex') or '(not available)'}",
+        f"=== CANDIDATE COVER LETTER (LaTeX) ===\n{state.get('cover_letter_latex') or '(not available)'}",
+        f"=== KB CONTEXT ===\n{state.get('kb_context_text') or '(none available)'}",
+        (
+            "Produce the complete preparation guide as valid markdown following the "
+            "section structure described in the system prompt. Include flashcard fenced "
+            "blocks (```flashcard ... ```) for every technical term worth reviewing."
+        ),
+    ]
+    user_prompt = "\n\n".join(user_prompt_parts)
+
+    events_before: list[dict] = [{"node": "generate_guide", "status": "start"}]
+
+    try:
+        result = await llm_call_with_trace(
+            system_prompt,
+            user_prompt,
+            settings,
+            provider=resolved_provider,
+            model=resolved_model,
+            tools=[_web_search_tool(max_uses=settings.prep_guide_max_web_searches)],
+            thinking_budget=settings.prep_guide_thinking_budget,
+        )
+    except Exception as exc:
+        return {
+            "error": str(exc),
+            "progress_events": events_before + [
+                {"node": "generate_guide", "status": "error", "detail": str(exc)}
+            ],
+        }
+
+    search_log = result.search_log or []
+    thinking = result.thinking or ""
+
+    return {
+        "markdown": result.text,
+        "thinking": thinking,
+        "search_log": search_log,
+        "generation_system_prompt": system_prompt,
+        "generation_user_prompt": user_prompt,
+        "progress_events": events_before + [
+            {
+                "node": "generate_guide",
+                "status": "done",
+                "searches_used": len(search_log),
+                "thinking_chars": len(thinking),
+            }
+        ],
+    }
+
+
+async def finalize_prep_guide(state: PrepGuideState, settings: Settings | None = None) -> dict:
+    """Persist the generated guide to the database."""
+    settings = settings or Settings()
+
+    if state.get("error"):
+        return {
+            "progress_events": [{"node": "finalize", "status": "error"}],
+        }
+
+    from jam.db import db_upsert_prep_guide
+
+    interview_id = state.get("interview_id", "")
+    search_log = state.get("search_log") or []
+    thinking = state.get("thinking") or ""
+
+    try:
+        db_upsert_prep_guide(
+            interview_id=interview_id,
+            markdown_source=state.get("markdown") or "",
+            generation_system_prompt=state.get("generation_system_prompt"),
+            generation_user_prompt=state.get("generation_user_prompt"),
+            web_search_log=json.dumps(search_log),
+            thinking_summary=thinking,
+            last_generated_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        )
+    except Exception as exc:
+        logger.error("finalize_prep_guide: db_upsert_prep_guide failed: %s", exc)
+        return {
+            "error": str(exc),
+            "progress_events": [
+                {"node": "finalize", "status": "error", "detail": str(exc)}
+            ],
+        }
+
+    return {
+        "progress_events": [{"node": "finalize", "status": "ok"}],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Graph builder
+# ---------------------------------------------------------------------------
+
+
+def build_prep_guide_graph():
+    """Build the linear interview prep-guide LangGraph."""
+    from langgraph.graph import END, START, StateGraph
+
+    builder = StateGraph(PrepGuideState)
+    builder.add_node("load_context", load_context)
+    builder.add_node("generate_guide", generate_guide)
+    builder.add_node("finalize", finalize_prep_guide)
+    builder.add_edge(START, "load_context")
+    builder.add_edge("load_context", "generate_guide")
+    builder.add_edge("generate_guide", "finalize")
+    builder.add_edge("finalize", END)
+    return builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (consumed by server.py for SSE streaming)
+# ---------------------------------------------------------------------------
+
+
+async def run_prep_guide_graph(
+    initial_state: PrepGuideState,
+    settings: Settings | None = None,
+) -> AsyncIterator[dict]:
+    """Stream SSE-shaped events from the prep-guide graph.
+
+    Yields one event per node transition plus a final ``{node: "done", ...}``
+    event that contains the full output or an error.
+
+    The final event shape::
+
+        {
+            "node": "done",
+            "markdown": str,
+            "generation_system_prompt": str,
+            "generation_user_prompt": str,
+            "web_search_log": str,   # JSON-encoded list[dict]
+            "thinking_summary": str,
+            "error": str | None,
+        }
+    """
+    settings = settings or Settings()
+
+    # Inject settings into node callables via closure so the graph can pick
+    # them up without needing LangGraph config injection.
+    async def _load_context(st: PrepGuideState) -> dict:
+        return await load_context(st, settings=settings)
+
+    async def _generate_guide(st: PrepGuideState) -> dict:
+        return await generate_guide(st, settings=settings)
+
+    async def _finalize(st: PrepGuideState) -> dict:
+        return await finalize_prep_guide(st, settings=settings)
+
+    from langgraph.graph import END, START, StateGraph
+
+    builder = StateGraph(PrepGuideState)
+    builder.add_node("load_context", _load_context)
+    builder.add_node("generate_guide", _generate_guide)
+    builder.add_node("finalize", _finalize)
+    builder.add_edge(START, "load_context")
+    builder.add_edge("load_context", "generate_guide")
+    builder.add_edge("generate_guide", "finalize")
+    builder.add_edge("finalize", END)
+    graph = builder.compile()
+
+    final_state: PrepGuideState = {}  # type: ignore[assignment]
+    async for chunk in graph.astream(initial_state):
+        # chunk is {node_name: state_update}
+        for node_name, state_update in chunk.items():
+            final_state.update(state_update)
+            for evt in state_update.get("progress_events", []):
+                yield evt
+
+    search_log = final_state.get("search_log") or []
+    yield {
+        "node": "done",
+        "markdown": final_state.get("markdown") or "",
+        "generation_system_prompt": final_state.get("generation_system_prompt") or "",
+        "generation_user_prompt": final_state.get("generation_user_prompt") or "",
+        "web_search_log": json.dumps(search_log),
+        "thinking_summary": final_state.get("thinking") or "",
+        "error": final_state.get("error") or None,
+    }

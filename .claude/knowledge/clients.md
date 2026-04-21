@@ -1,14 +1,17 @@
 # clients Knowledge
-<!-- source: jam/llm.py, jam/kb_client.py, jam/gmail_client.py -->
-<!-- hash: 31fcea19bbb4 -->
-<!-- updated: 2026-04-01 -->
+<!-- source: jam/llm.py, jam/kb_client.py, jam/gmail_client.py, jam/msgraph_client.py -->
+<!-- hash: d95f1804d429 -->
+<!-- updated: 2026-04-21 -->
 
 ## llm.py -- Public API
 
 | Function | Signature | Purpose |
 |---|---|---|
-| `llm_call` | `async (system: str, user: str, settings: Settings \| None = None, *, provider: str \| None = None, model: str \| None = None) -> str` | Generic LLM call dispatching to configured provider; optional `provider`/`model` keyword args override settings values (used by generation nodes for per-step model selection) |
+| `llm_call` | `async (system: str, user: str, settings: Settings \| None = None, *, provider: str \| None = None, model: str \| None = None, tools: list \| None = None) -> str` | Generic LLM call dispatching to configured provider; optional `provider`/`model`/`tools` keyword args. `tools` is honored for `anthropic` and `cliproxy` (passed through to Claude); silently dropped for OpenAI-compatible providers |
+| `llm_call_with_trace` | `async (system: str, user: str, settings: Settings \| None = None, *, provider: str \| None = None, model: str \| None = None, tools: list \| None = None, thinking_budget: int \| None = None) -> LLMTraceResult` | Anthropic/cliproxy-only sibling of `llm_call` that returns `{text, thinking, search_log}`. Raises `ValueError` for other providers. When `thinking_budget` is set, adds `thinking={type:"enabled", budget_tokens}`, forces `temperature=1`, sets `max_tokens=max(16384, budget+8192)`. Parses `thinking` + `server_tool_use`/`web_search_tool_result` blocks into `search_log` entries `{query,url,title}` |
+| `_web_search_tool` | `(max_uses: int = 3) -> dict` | Helper returning the Claude server-side `web_search_20250305` tool spec. Single source of truth for the `max_uses` budget |
 | `extract_job_info` | `async (text: str, settings: Settings \| None = None) -> dict` | Parse job posting text via LLM; returns structured dict with company, position, location, salary_range, requirements, description, opening_date, closing_date |
+| `extract_email_info` | `async (text: str, settings: Settings \| None = None) -> dict` | Classify a job-application email and extract structured fields. Returns `{kind: "interview_invite"\|"rejection"\|"unknown", confidence, interview:{round_type, scheduled_at, scheduled_time, interviewer_names, location, prep_notes, links[]}, rejection:{summary, reasons, links[]}, received_at}`. Prompt enforces: only populate when high-confidence; leave `scheduled_at/scheduled_time` null if multiple candidate slots are offered; `links` always array (deduped). |
 
 ### Provider dispatch
 
@@ -18,11 +21,22 @@
 | `groq` | `https://api.groq.com/openai/v1/chat/completions` | `Bearer {groq_api_key}` |
 | `ollama` | `{ollama_base_url}/v1/chat/completions` | none |
 | `anthropic` | `https://api.anthropic.com/v1/messages` | `x-api-key` header, anthropic-version `2023-06-01` |
-| `cliproxy` | `{cliproxy_base_url}/v1/chat/completions` | `Bearer {cliproxy_api_key}` |
+| `cliproxy` | `{cliproxy_base_url}/v1/messages` | `x-api-key: {cliproxy_api_key}`, anthropic-version `2023-06-01` |
 
 - OpenAI, Groq, and Ollama use the same `_call_openai_compatible` path (OpenAI chat completions format).
-- Anthropic uses a dedicated `_call_anthropic` path (Messages API format, max_tokens 8192).
-- All calls use `temperature: 0.1`. Timeouts: 60s for OpenAI-compatible, 120s for Anthropic.
+- Anthropic AND cliproxy use `_call_anthropic` (Messages API format). Cliproxy's `/v1/messages` endpoint transparently relays Claude's server-side `web_search_20250305` tool.
+- **Shared helper**: `_anthropic_request(url, api_key, model, system, user, *, tools=None, thinking_budget=None) -> list[dict]` executes the HTTP call and returns the raw `content` block list. Used by both `_call_anthropic` (concatenates text blocks, returns str) and `llm_call_with_trace` (parses thinking + tool blocks, returns structured result).
+- `_call_anthropic(url, api_key, model, system, user, *, tools=None)` — `url` is a required first arg (so cliproxy and direct Anthropic share the same function). `max_tokens` is 8192 normally, 16384 when `tools` is passed.
+- **Response parsing (llm_call path):** concatenates the `text` of EVERY `type=="text"` block in `content` (in order). Tool-using responses contain `server_tool_use` + `web_search_tool_result` blocks followed by multiple consecutive `text` blocks — all text blocks must be joined to reconstruct the reply. Raises `ValueError("Claude returned no text content")` if there are zero text blocks.
+- **Response parsing (llm_call_with_trace path):** iterates `content` blocks once, accumulating `text` blocks → `text`, `thinking` blocks → `thinking`, and pairing each `server_tool_use(name="web_search")` with the subsequent `web_search_tool_result` to flatten `{query, url, title}` entries per result into `search_log`. Missing/empty result blocks are skipped silently.
+- All calls use `temperature: 0.1`. Timeouts: 60s for OpenAI-compatible, 120s for Anthropic/cliproxy.
+- **Extended thinking**: when `thinking_budget > 0` is passed to `_anthropic_request`, temperature is forced to `1` (Anthropic requirement) and `max_tokens` is raised to `max(16384, budget + 8192)`.
+
+### Web-search enrichment for extract_job_info
+
+When `settings.search_enrichment_enabled` is True AND `settings.llm_provider in ("anthropic", "cliproxy")`, `extract_job_info` passes `tools=[_web_search_tool()]` (max_uses=3) via `llm_call`, and appends a salary-grade resolution instruction to the user-turn envelope ("If the posting references a salary grade... use the web_search tool to resolve it..."). Verified live: ESA A2 grade JD with no € figure resolves to a concrete monthly/annual range.
+
+For other providers, or when the flag is False, extraction falls back to the existing no-tool path unchanged.
 
 ### Internal helpers
 
@@ -31,13 +45,19 @@
 | `_api_key_for(settings, provider=None)` | Resolve API key string from explicit provider or `settings.llm_provider` |
 | `_get_ollama_url(settings)` | Build Ollama chat completions URL from `ollama_base_url` |
 | `_call_openai_compatible(url, api_key, model, system, user)` | HTTP call for OpenAI-format APIs |
-| `_call_anthropic(api_key, model, system, user)` | HTTP call for Anthropic Messages API |
+| `_call_anthropic(url, api_key, model, system, user, *, tools=None)` | Thin wrapper: calls `_anthropic_request`, joins text blocks, returns str |
+| `_anthropic_request(url, api_key, model, system, user, *, tools=None, thinking_budget=None)` | Shared HTTP helper; returns raw `content` block list |
 | `_parse_json(raw)` | Extract JSON from LLM response, tolerating markdown fences |
 
 ### Constants
 
 - `_SYSTEM_PROMPT` -- job posting parser instructions; outputs JSON with: company, position, location, salary_range, requirements, description, opening_date, closing_date
+- `_EMAIL_SYSTEM_PROMPT` -- job-application email classifier/extractor instructions; produces the `extract_email_info` JSON shape
 - `_OPENAI_COMPATIBLE_URLS` -- maps `"openai"` and `"groq"` to their endpoints
+
+### LLMTraceResult dataclass
+
+`@dataclass` with fields `text: str = ""`, `thinking: str = ""`, `search_log: list[dict] = field(default_factory=list)`. Each `search_log` entry is `{query: str, url: str, title: str}`.
 
 ## kb_client.py -- Public API
 
@@ -124,17 +144,59 @@ All public functions use a lazily-created module-level `httpx.AsyncClient` singl
 
 Unlike `llm.py` and `kb_client.py` which import `Settings` at module level, `gmail_client.py` uses `TYPE_CHECKING` guard and deferred `from jam.config import Settings as _Settings` inside each function body to avoid circular imports with `jam.db`.
 
+## msgraph_client.py -- Public API
+
+| Function | Signature | Purpose |
+|---|---|---|
+| `get_auth_url` | `(settings: Settings \| None = None) -> str` | Build Microsoft OAuth consent URL (`response_type=code`, `response_mode=query`, `state=jam`). Confidential-client flow — no PKCE. |
+| `exchange_code` | `async (code: str, settings: Settings \| None = None) -> dict` | POST auth code to token endpoint, then GET `/me` for user email. Returns `{refresh_token, access_token, expires_at (ISO UTC), user_email}`. |
+| `ensure_access_token` | `async (settings: Settings \| None = None) -> str` | Returns cached access_token if still valid (30s buffer). Otherwise refreshes via `grant_type=refresh_token` and persists the new `{access_token, expires_at}` (and rotated refresh_token if returned) via `jam.db.set_settings_batch` + `os.environ` dual-write. Raises `RuntimeError` if no refresh_token is set. |
+| `upsert_event` | `async (round_row: dict, app_row: dict, settings: Settings \| None = None) -> str` | POST new event when `round_row['graph_event_id']` is empty; PATCH otherwise. 404 on PATCH falls back to POST. Returns Graph event id. |
+| `delete_event` | `async (graph_event_id: str, settings: Settings \| None = None) -> None` | DELETE `/me/events/{id}`; swallows 404 silently. |
+
+### OAuth & API endpoints
+
+| Constant | Value |
+|---|---|
+| `_AUTHORITY_TEMPLATE` | `https://login.microsoftonline.com/{tenant}` (tenant from `settings.ms_graph_tenant`, default `"common"`) |
+| `_AUTHORIZE_PATH` | `/oauth2/v2.0/authorize` |
+| `_TOKEN_PATH` | `/oauth2/v2.0/token` |
+| `_GRAPH_BASE` | `https://graph.microsoft.com/v1.0` |
+| `_SCOPES` | `offline_access Calendars.ReadWrite User.Read` |
+| `_EXPIRY_BUFFER_SECONDS` | `30` — tokens expiring within 30s are treated as expired |
+
+### Event body construction (`_build_event_body`)
+
+- `subject`: `"Interview: {company} — {position} (Round {round_number} · {round_type})"`
+- `body.contentType`: `"HTML"`; content = `<p>{escaped prep_notes}</p><p>{anchor tags for each link}</p>`. `html.escape` applied to every user-supplied string.
+- `location.displayName`: `round_row['location']`, falling back to the first non-empty line in `round_row['links']` if location is blank.
+- `start` / `end`:
+  - If `scheduled_time` is present: parsed strictly as `HH:MM`; start = `{YYYY-MM-DDTHH:MM:00, timeZone=settings.calendar_timezone}`, end = start + `settings.calendar_default_duration_minutes`; `isAllDay: false`.
+  - If `scheduled_time` is empty: all-day event; start = `YYYY-MM-DDT00:00:00`, end = next-day `00:00:00`, `isAllDay: true`.
+- `reminderMinutesBeforeStart`: `15`
+- `attendees`: always `[]` (interviewer_names is free text, not emails — never invite strangers).
+- Raises `ValueError` for malformed `scheduled_time` (non `HH:MM`, out-of-range hours/minutes) or missing `scheduled_at`.
+
+### Calendar targeting
+
+If `settings.ms_graph_calendar_id` is set, new events go to `/me/calendars/{id}/events`; otherwise the user's default calendar via `/me/events`. PATCH and DELETE always use `/me/events/{event_id}` (the event id is calendar-scoped on the Graph side).
+
+### Settings injection pattern
+
+Uses `TYPE_CHECKING` guard + deferred `from jam.config import Settings as _Settings` inside each function body (same pattern as `gmail_client.py`) to avoid circular imports with `jam.db` during the token-refresh persistence step. HTTP client created via `_build_client()` (returns fresh `httpx.AsyncClient(timeout=30)`) — tests monkey-patch this helper to inject a mock.
+
 ## Dependencies
 
 - **llm.py** imports from: `json`, `re`, `httpx`, `jam.config.Settings`
 - **kb_client.py** imports from: `httpx`, `logging`, `time`, `urllib.parse` (deferred), `jam.config.Settings`
 - **gmail_client.py** imports from: `base64`, `hashlib`, `secrets`, `email.mime.text`, `google_auth_oauthlib.flow.Flow`, `google.oauth2.credentials.Credentials`, `googleapiclient.discovery.build`, `jam.config.Settings` (TYPE_CHECKING), `jam.db.set_setting` (deferred), `jam.db.get_all_settings` (deferred)
+- **msgraph_client.py** imports from: `html`, `os`, `datetime`, `httpx`, `jam.config.Settings` (TYPE_CHECKING), `jam.db.set_settings_batch` (deferred)
 
 ### Imported by
 
 | Module | Imports |
 |---|---|
-| `jam/server.py` | `extract_job_info` from llm; `ingest_url`, `ingest_text`, `close_client` from kb_client; `get_auth_url`, `exchange_code` from gmail_client (deferred) |
+| `jam/server.py` | `extract_job_info`, `extract_email_info` from llm; `ingest_url`, `ingest_text`, `close_client` from kb_client; `get_auth_url`, `exchange_code` from gmail_client (deferred); `get_auth_url`, `exchange_code`, `upsert_event`, `delete_event` from msgraph_client (planned) |
 | `jam/server.py` | `list_namespace_documents`, `search_documents` from kb_client (deferred, inside endpoint) |
 | `jam/generation.py` | `llm_call` from llm (deferred, 5 call sites); `search_documents`, `list_namespace_documents` from kb_client (deferred) |
 
@@ -147,14 +209,15 @@ Unlike `llm.py` and `kb_client.py` which import `Settings` at module level, `gma
 
 ## Testing
 
-- **Files**: `tests/unit/test_llm.py`, `tests/unit/test_kb_client.py`, `tests/unit/test_gmail_client.py`
+- **Files**: `tests/unit/test_llm.py`, `tests/unit/test_kb_client.py`, `tests/unit/test_gmail_client.py`, `tests/unit/test_msgraph_client.py`
 - **Mock targets**:
   - `jam.llm.httpx.AsyncClient` -- mock HTTP for all LLM provider tests (async context manager)
   - `jam.kb_client._get_client` -- mock the shared singleton; returns a plain `AsyncMock` instance (no context manager)
   - `jam.gmail_client.get_credentials` -- mock credential building
   - `jam.gmail_client.build` -- mock Google API service construction
   - `jam.gmail_client.Flow.from_client_config` -- mock OAuth flow (via `google_auth_oauthlib`)
-- **Pattern**: LLM tests use `AsyncMock` with `__aenter__`/`__aexit__` to mock the async context manager. KB tests mock `_get_client` returning a plain `AsyncMock` (no context manager needed). Gmail tests use synchronous `MagicMock`.
+  - `jam.msgraph_client._build_client` -- monkey-patched to return a `_MockAsyncClient` that serves pre-configured responses in sequence; `jam.db.set_settings_batch` is patched to verify persistence on refresh
+- **Pattern**: LLM tests use `AsyncMock` with `__aenter__`/`__aexit__` to mock the async context manager. KB tests mock `_get_client` returning a plain `AsyncMock` (no context manager needed). Gmail tests use synchronous `MagicMock`. msgraph tests use a custom `_MockAsyncClient` async context manager with a response queue.
 - **KB cache isolation**: Tests use a `clear_cache` autouse fixture that calls `clear_ns_cache()` before each test.
 
 ## Known Limitations
@@ -165,4 +228,5 @@ Unlike `llm.py` and `kb_client.py` which import `Settings` at module level, `gma
 - Gmail functions are synchronous (blocking) despite the rest of the codebase being async.
 - No retry logic in any client; transient failures propagate or silently degrade.
 - `ingest_text` derives filename from URL path; URLs without a path segment fall back to `"document.txt"`.
-- Anthropic calls use a fixed `max_tokens: 8192`; not configurable via Settings.
+- Anthropic `max_tokens` ladder: 8192 plain, 16384 with tools, `max(16384, thinking_budget + 8192)` with extended thinking. Not further configurable via Settings.
+- `llm_call_with_trace` is strictly Anthropic/cliproxy; raising `ValueError` for other providers so callers must handle the gate (see the interview prep-guide generator in `jam/generation.py`).

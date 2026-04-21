@@ -15,10 +15,15 @@ from jam.db import (
     update_extra_question, delete_extra_question,
     create_interview_round, list_interview_rounds, get_interview_round,
     update_interview_round, delete_interview_round,
+    create_rejection, list_rejections, get_rejection,
+    update_rejection, delete_rejection,
+    db_get_prep_guide, db_upsert_prep_guide, db_delete_prep_guide,
     _connect, _create_catalog_tables, _migrate_catalog_add_cliproxy,
     _migrate_dedupe_provider_fields, _migrate_catalog_add_cliproxy_api_key,
     _migrate_catalog_add_opus_4_7,
     _migrate_interview_rounds_add_scheduled_time,
+    _migrate_interview_rounds_add_graph_event_id,
+    _migrate_interview_rounds_add_links,
     _migrate_documents_add_feedback,
 )
 
@@ -1159,3 +1164,516 @@ def test_update_document_feedback_fields():
     assert fetched["quality_feedback"] == "Needs stronger action verbs"
     assert fetched["compress_feedback"] == "Remove older positions"
     assert fetched["last_page_count"] == 2
+
+
+# ── interview_rounds links migration ─────────────────────────────────────────
+
+def test_migrate_interview_rounds_add_links_preserves_existing_rows():
+    """Migration adds links column and existing rows get default value ''."""
+    db = _tmp_db()
+    # Build a database with interview_rounds WITHOUT the links column.
+    with _connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applications (
+                id           TEXT PRIMARY KEY,
+                company      TEXT NOT NULL,
+                position     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'applied',
+                url          TEXT,
+                notes        TEXT,
+                applied_date TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_rounds (
+                id               TEXT PRIMARY KEY,
+                application_id   TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                round_type       TEXT NOT NULL DEFAULT 'other',
+                round_number     INTEGER NOT NULL DEFAULT 1,
+                scheduled_at     TEXT,
+                scheduled_time   TEXT NOT NULL DEFAULT '',
+                completed_at     TEXT,
+                interviewer_names TEXT NOT NULL DEFAULT '',
+                location         TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL DEFAULT 'scheduled',
+                prep_notes       TEXT NOT NULL DEFAULT '',
+                debrief_notes    TEXT NOT NULL DEFAULT '',
+                questions_asked  TEXT NOT NULL DEFAULT '',
+                went_well        TEXT NOT NULL DEFAULT '',
+                to_improve       TEXT NOT NULL DEFAULT '',
+                confidence       INTEGER,
+                sort_order       INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO applications (id, company, position, status, applied_date, created_at, updated_at) "
+            "VALUES ('app-1', 'ACME', 'Dev', 'applied', '2026-01-01', datetime('now'), datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO interview_rounds (id, application_id, round_type) "
+            "VALUES ('rnd-1', 'app-1', 'technical')"
+        )
+
+    # Confirm links is absent before migration.
+    with _connect(db) as conn:
+        cols_before = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "links" not in cols_before
+
+    # Run migration.
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_links(conn)
+
+    # Verify column added, row preserved, default is ''.
+    with _connect(db) as conn:
+        cols_after = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "links" in cols_after
+        row = conn.execute("SELECT * FROM interview_rounds WHERE id = 'rnd-1'").fetchone()
+        assert row is not None
+        assert row["round_type"] == "technical"
+        assert row["links"] == ""
+
+
+def test_migrate_interview_rounds_add_links_is_idempotent():
+    """Running the migration twice does not raise an error."""
+    db = _tmp_db()
+    init_db(db)
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_links(conn)
+        _migrate_interview_rounds_add_links(conn)
+    with _connect(db) as conn:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    assert "links" in cols
+
+
+# ── interview_rounds links round-trip CRUD ───────────────────────────────────
+
+def test_create_interview_round_with_links():
+    """create_interview_round accepts and stores the links field."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round(
+        "aaaa-bbbb",
+        links="https://meet.example.com/abc\nhttps://docs.example.com/brief",
+        db_path=db,
+    )
+    assert r["links"] == "https://meet.example.com/abc\nhttps://docs.example.com/brief"
+
+
+def test_interview_round_links_default_is_empty():
+    """links defaults to '' when not supplied."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round("aaaa-bbbb", db_path=db)
+    assert r["links"] == ""
+
+
+def test_update_interview_round_links():
+    """update_interview_round can update the links field."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round("aaaa-bbbb", links="old-link", db_path=db)
+    updated = update_interview_round(r["id"], {"links": "new-link"}, db_path=db)
+    assert updated is not None
+    assert updated["links"] == "new-link"
+    # Verify persisted.
+    fetched = get_interview_round(r["id"], db_path=db)
+    assert fetched["links"] == "new-link"
+
+
+def test_list_interview_rounds_includes_links():
+    """list_interview_rounds returns the links column in every row."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    create_interview_round("aaaa-bbbb", links="https://zoom.example.com/1", db_path=db)
+    rows = list_interview_rounds("aaaa-bbbb", db_path=db)
+    assert len(rows) == 1
+    assert rows[0]["links"] == "https://zoom.example.com/1"
+
+
+# ── Rejections CRUD ──────────────────────────────────────────────────────────
+
+def test_create_rejection_defaults():
+    """create_rejection stores all defaults correctly."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection("aaaa-bbbb", db_path=db)
+    assert rej["id"]
+    assert rej["application_id"] == "aaaa-bbbb"
+    assert rej["summary"] == ""
+    assert rej["reasons"] == ""
+    assert rej["links"] == ""
+    assert rej["raw_email"] == ""
+    assert rej["received_at"] is None
+    assert rej["followup_status"] == "none"
+    assert rej["followup_notes"] == ""
+    assert rej["created_at"]
+    assert rej["updated_at"]
+
+
+def test_create_rejection_with_all_fields():
+    """create_rejection stores explicitly supplied values."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection(
+        "aaaa-bbbb",
+        summary="Not a fit",
+        reasons="Overqualified",
+        links="https://apply.example.com",
+        raw_email="Dear Applicant...",
+        received_at="2026-04-20",
+        followup_status="pending",
+        followup_notes="Send thank-you",
+        db_path=db,
+    )
+    assert rej["summary"] == "Not a fit"
+    assert rej["reasons"] == "Overqualified"
+    assert rej["links"] == "https://apply.example.com"
+    assert rej["raw_email"] == "Dear Applicant..."
+    assert rej["received_at"] == "2026-04-20"
+    assert rej["followup_status"] == "pending"
+    assert rej["followup_notes"] == "Send thank-you"
+
+
+def test_list_rejections_newest_first():
+    """list_rejections returns rows ordered by created_at DESC."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r1 = create_rejection("aaaa-bbbb", summary="first", db_path=db)
+    r2 = create_rejection("aaaa-bbbb", summary="second", db_path=db)
+    # Force distinct created_at values via a direct UPDATE so ordering is deterministic.
+    with _connect(db) as conn:
+        conn.execute(
+            "UPDATE rejections SET created_at = '2026-01-01T10:00:00' WHERE id = ?",
+            (r1["id"],),
+        )
+        conn.execute(
+            "UPDATE rejections SET created_at = '2026-01-02T10:00:00' WHERE id = ?",
+            (r2["id"],),
+        )
+    rows = list_rejections("aaaa-bbbb", db_path=db)
+    assert len(rows) == 2
+    assert rows[0]["id"] == r2["id"]
+    assert rows[1]["id"] == r1["id"]
+
+
+def test_get_rejection():
+    """get_rejection returns the correct row."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection("aaaa-bbbb", summary="test", db_path=db)
+    fetched = get_rejection(rej["id"], db_path=db)
+    assert fetched is not None
+    assert fetched["id"] == rej["id"]
+    assert fetched["summary"] == "test"
+
+
+def test_get_rejection_not_found():
+    """get_rejection returns None for unknown id."""
+    db = _tmp_db()
+    init_db(db)
+    assert get_rejection("missing", db_path=db) is None
+
+
+def test_update_rejection():
+    """update_rejection modifies fields and sets updated_at."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection("aaaa-bbbb", summary="original", db_path=db)
+
+    updated = update_rejection(
+        rej["id"],
+        {"summary": "revised", "followup_status": "done"},
+        db_path=db,
+    )
+    assert updated is not None
+    assert updated["summary"] == "revised"
+    assert updated["followup_status"] == "done"
+    # updated_at is auto-set by the SQL expression datetime('now')
+    assert updated["updated_at"]
+
+
+def test_update_rejection_not_found():
+    """update_rejection returns None for unknown id."""
+    db = _tmp_db()
+    init_db(db)
+    assert update_rejection("missing", {"summary": "x"}, db_path=db) is None
+
+
+def test_delete_rejection():
+    """delete_rejection removes the row and returns True; second call returns False."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection("aaaa-bbbb", db_path=db)
+    assert delete_rejection(rej["id"], db_path=db) is True
+    assert get_rejection(rej["id"], db_path=db) is None
+    assert delete_rejection(rej["id"], db_path=db) is False
+
+
+def test_cascade_delete_rejections():
+    """Deleting the parent application cascades to rejections."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rej = create_rejection("aaaa-bbbb", summary="cascade test", db_path=db)
+    delete_application("aaaa-bbbb", db_path=db)
+    assert get_rejection(rej["id"], db_path=db) is None
+
+
+# ── Interview prep guides CRUD ───────────────────────────────────────────────
+
+def test_upsert_prep_guide_insert():
+    """Upserting a guide for a new interview_id inserts a row with all fields."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rnd = create_interview_round("aaaa-bbbb", db_path=db)
+
+    guide = db_upsert_prep_guide(
+        rnd["id"],
+        markdown_source="# Prep\n\nBe ready.",
+        generation_system_prompt="You are an interview coach.",
+        generation_user_prompt="Prepare me for a technical interview.",
+        web_search_log='[{"query":"q","url":"u","title":"t"}]',
+        thinking_summary="Candidate is strong.",
+        last_generated_at="2026-04-21T12:00:00",
+        db_path=db,
+    )
+
+    assert guide["id"]
+    assert guide["interview_id"] == rnd["id"]
+    assert guide["markdown_source"] == "# Prep\n\nBe ready."
+    assert guide["generation_system_prompt"] == "You are an interview coach."
+    assert guide["generation_user_prompt"] == "Prepare me for a technical interview."
+    assert guide["web_search_log"] == '[{"query":"q","url":"u","title":"t"}]'
+    assert guide["thinking_summary"] == "Candidate is strong."
+    assert guide["last_generated_at"] == "2026-04-21T12:00:00"
+    assert guide["created_at"]
+    assert guide["updated_at"]
+
+    # Fetch via db_get_prep_guide and assert round-trip
+    fetched = db_get_prep_guide(rnd["id"], db_path=db)
+    assert fetched is not None
+    assert fetched["id"] == guide["id"]
+    assert fetched["markdown_source"] == "# Prep\n\nBe ready."
+    assert fetched["last_generated_at"] == "2026-04-21T12:00:00"
+
+
+def test_upsert_prep_guide_overwrite():
+    """A second upsert on the same interview_id replaces fields (single row)."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rnd = create_interview_round("aaaa-bbbb", db_path=db)
+
+    first = db_upsert_prep_guide(
+        rnd["id"],
+        markdown_source="First draft.",
+        db_path=db,
+    )
+
+    second = db_upsert_prep_guide(
+        rnd["id"],
+        markdown_source="Second draft.",
+        thinking_summary="Revised.",
+        db_path=db,
+    )
+
+    # Only one row must exist
+    with _connect(db) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM interview_prep_guides WHERE interview_id = ?",
+            (rnd["id"],),
+        ).fetchone()[0]
+    assert count == 1
+
+    # The returned row reflects the second write
+    assert second["id"] == first["id"]  # same PK
+    assert second["markdown_source"] == "Second draft."
+    assert second["thinking_summary"] == "Revised."
+
+    # Confirm via get
+    fetched = db_get_prep_guide(rnd["id"], db_path=db)
+    assert fetched["markdown_source"] == "Second draft."
+
+
+def test_get_prep_guide_missing():
+    """db_get_prep_guide returns None when no guide exists for the interview_id."""
+    db = _tmp_db()
+    init_db(db)
+    assert db_get_prep_guide("nonexistent-id", db_path=db) is None
+
+
+def test_prep_guide_cascade_delete():
+    """Deleting the interview round cascades to its prep guide."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rnd = create_interview_round("aaaa-bbbb", db_path=db)
+
+    db_upsert_prep_guide(rnd["id"], markdown_source="Guide content.", db_path=db)
+    assert db_get_prep_guide(rnd["id"], db_path=db) is not None
+
+    delete_interview_round(rnd["id"], db_path=db)
+
+    assert db_get_prep_guide(rnd["id"], db_path=db) is None
+
+
+def test_prep_guide_migration_preserves_existing_data():
+    """Running init_db() twice is a no-op on existing interview and guide data."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    rnd = create_interview_round("aaaa-bbbb", db_path=db)
+    db_upsert_prep_guide(rnd["id"], markdown_source="Preserved.", db_path=db)
+
+    # Second init_db must be idempotent
+    init_db(db)
+
+    # Interview round must still exist
+    assert get_interview_round(rnd["id"], db_path=db) is not None
+
+    # Prep guide must still exist with correct content
+    fetched = db_get_prep_guide(rnd["id"], db_path=db)
+    assert fetched is not None
+    assert fetched["markdown_source"] == "Preserved."
+
+
+# ── graph_event_id migration ──────────────────────────────────────────────────
+
+def test_migrate_interview_rounds_add_graph_event_id():
+    """Migration adds graph_event_id to an existing table and preserves existing data."""
+    db = _tmp_db()
+    # Build a database with interview_rounds WITHOUT the graph_event_id column by
+    # creating the table directly, bypassing init_db's migration call.
+    with _connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applications (
+                id           TEXT PRIMARY KEY,
+                company      TEXT NOT NULL,
+                position     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'applied',
+                url          TEXT,
+                notes        TEXT,
+                applied_date TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interview_rounds (
+                id               TEXT PRIMARY KEY,
+                application_id   TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                round_type       TEXT NOT NULL DEFAULT 'other',
+                round_number     INTEGER NOT NULL DEFAULT 1,
+                scheduled_at     TEXT,
+                scheduled_time   TEXT NOT NULL DEFAULT '',
+                completed_at     TEXT,
+                interviewer_names TEXT NOT NULL DEFAULT '',
+                location         TEXT NOT NULL DEFAULT '',
+                links            TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL DEFAULT 'scheduled',
+                prep_notes       TEXT NOT NULL DEFAULT '',
+                debrief_notes    TEXT NOT NULL DEFAULT '',
+                questions_asked  TEXT NOT NULL DEFAULT '',
+                went_well        TEXT NOT NULL DEFAULT '',
+                to_improve       TEXT NOT NULL DEFAULT '',
+                confidence       INTEGER,
+                sort_order       INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        # Seed an existing application and round to verify data is preserved.
+        conn.execute(
+            "INSERT INTO applications (id, company, position, status, applied_date, created_at, updated_at) "
+            "VALUES ('app-1', 'ACME', 'Dev', 'applied', '2026-01-01', datetime('now'), datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO interview_rounds (id, application_id, round_type) "
+            "VALUES ('rnd-1', 'app-1', 'technical')"
+        )
+
+    # Verify the column is absent before migration.
+    with _connect(db) as conn:
+        cols_before = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "graph_event_id" not in cols_before
+
+    # Run the migration.
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_graph_event_id(conn)
+
+    # Verify column was added and existing data preserved.
+    with _connect(db) as conn:
+        cols_after = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+        assert "graph_event_id" in cols_after
+
+        count = conn.execute("SELECT COUNT(*) FROM interview_rounds").fetchone()[0]
+        assert count == 1
+
+        row = conn.execute("SELECT * FROM interview_rounds WHERE id = 'rnd-1'").fetchone()
+        assert row is not None
+        assert row["round_type"] == "technical"
+        assert row["graph_event_id"] is None
+
+
+def test_migrate_interview_rounds_add_graph_event_id_is_idempotent():
+    """Running the migration twice does not raise an error."""
+    db = _tmp_db()
+    init_db(db)
+    with _connect(db) as conn:
+        _migrate_interview_rounds_add_graph_event_id(conn)
+        _migrate_interview_rounds_add_graph_event_id(conn)
+    with _connect(db) as conn:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
+    assert "graph_event_id" in cols
+
+
+def test_update_interview_round_graph_event_id():
+    """update_interview_round can set and clear graph_event_id."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    r = create_interview_round("aaaa-bbbb", db_path=db)
+
+    # Newly created round should have graph_event_id as None.
+    assert r["graph_event_id"] is None
+
+    # Set the graph_event_id.
+    updated = update_interview_round(r["id"], {"graph_event_id": "abc123"}, db_path=db)
+    assert updated is not None
+    assert updated["graph_event_id"] == "abc123"
+
+    # Confirm it is persisted.
+    fetched = get_interview_round(r["id"], db_path=db)
+    assert fetched["graph_event_id"] == "abc123"
+
+    # Clear the graph_event_id by setting it to None.
+    cleared = update_interview_round(r["id"], {"graph_event_id": None}, db_path=db)
+    assert cleared is not None
+    assert cleared["graph_event_id"] is None
+
+    # Confirm the clearing is persisted.
+    fetched_after = get_interview_round(r["id"], db_path=db)
+    assert fetched_after["graph_event_id"] is None
