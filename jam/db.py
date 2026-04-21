@@ -135,6 +135,7 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
             ("openai:gpt-4-turbo",   "openai", "gpt-4-turbo",   "GPT-4 Turbo",   "llm", 128000, None, None),
             ("openai:gpt-3.5-turbo", "openai", "gpt-3.5-turbo", "GPT-3.5 Turbo", "llm", 16385,  None, None),
             # Anthropic LLM
+            ("anthropic:claude-opus-4-7",   "anthropic", "claude-opus-4-7",   "Claude Opus 4.7",   "llm", 200000, None, None),
             ("anthropic:claude-opus-4-6",   "anthropic", "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
             ("anthropic:claude-sonnet-4-6", "anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6", "llm", 200000, None, None),
             ("anthropic:claude-haiku-4-5",  "anthropic", "claude-haiku-4-5",  "Claude Haiku 4.5",  "llm", 200000, None, None),
@@ -148,6 +149,7 @@ def _seed_catalog(conn: sqlite3.Connection) -> None:
             ("ollama:mistral",  "ollama", "mistral",  "Mistral",   "llm", None, None, None),
             ("ollama:phi3",     "ollama", "phi3",     "Phi-3",     "llm", None, None, None),
             # CLIProxy LLM (routes through CLIProxyAPI to Claude Max)
+            ("cliproxy:claude-opus-4-7",   "cliproxy", "claude-opus-4-7",   "Claude Opus 4.7",   "llm", 200000, None, None),
             ("cliproxy:claude-opus-4-6",   "cliproxy", "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
             ("cliproxy:claude-sonnet-4-6", "cliproxy", "claude-sonnet-4-6", "Claude Sonnet 4.6", "llm", 200000, None, None),
             ("cliproxy:claude-haiku-4-5",  "cliproxy", "claude-haiku-4-5",  "Claude Haiku 4.5",  "llm", 200000, None, None),
@@ -368,6 +370,34 @@ def _migrate_catalog_add_cliproxy_api_key(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_catalog_add_opus_4_7(conn: sqlite3.Connection) -> None:
+    """Add Claude Opus 4.7 models to existing databases.
+
+    Uses INSERT OR IGNORE so this migration is idempotent — safe to run on
+    both fresh databases (where _seed_catalog already inserted the rows) and
+    on existing databases that were seeded before Opus 4.7 was added.
+    """
+    conn.executemany(
+        """INSERT OR IGNORE INTO models
+           (id, provider_id, model_id, label, type, context_window, prompt_cost, completion_cost)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        [
+            ("anthropic:claude-opus-4-7", "anthropic", "claude-opus-4-7", "Claude Opus 4.7", "llm", 200000, None, None),
+            ("cliproxy:claude-opus-4-7",  "cliproxy",  "claude-opus-4-7", "Claude Opus 4.7", "llm", 200000, None, None),
+        ],
+    )
+
+
+def _migrate_documents_add_feedback(conn: sqlite3.Connection) -> None:
+    """Add feedback columns to documents if they do not exist."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()]
+    if "fit_feedback" not in cols:
+        conn.execute("ALTER TABLE documents ADD COLUMN fit_feedback TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE documents ADD COLUMN quality_feedback TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE documents ADD COLUMN compress_feedback TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE documents ADD COLUMN last_page_count INTEGER NOT NULL DEFAULT 0")
+
+
 def _create_extra_questions_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
@@ -459,9 +489,11 @@ def init_db(db_path: Path | None = None) -> None:
         _migrate_catalog_add_cliproxy(conn)
         _migrate_dedupe_provider_fields(conn)
         _migrate_catalog_add_cliproxy_api_key(conn)
+        _migrate_catalog_add_opus_4_7(conn)
         _create_applications_tables(conn)
         _migrate_applications_table(conn)
         _create_documents_tables(conn)
+        _migrate_documents_add_feedback(conn)
         _create_extra_questions_table(conn)
         _create_interview_rounds_table(conn)
         _migrate_interview_rounds_add_scheduled_time(conn)

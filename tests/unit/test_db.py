@@ -17,7 +17,9 @@ from jam.db import (
     update_interview_round, delete_interview_round,
     _connect, _create_catalog_tables, _migrate_catalog_add_cliproxy,
     _migrate_dedupe_provider_fields, _migrate_catalog_add_cliproxy_api_key,
+    _migrate_catalog_add_opus_4_7,
     _migrate_interview_rounds_add_scheduled_time,
+    _migrate_documents_add_feedback,
 )
 
 
@@ -203,7 +205,7 @@ def test_migrate_catalog_add_cliproxy_is_idempotent():
         model_count = conn.execute(
             "SELECT COUNT(*) FROM models WHERE provider_id = 'cliproxy'"
         ).fetchone()[0]
-        assert model_count == 3
+        assert model_count == 4  # Opus 4.7, Opus 4.6, Sonnet 4.6, Haiku 4.5
 
         field_count = conn.execute(
             "SELECT COUNT(*) FROM provider_fields WHERE provider_id = 'cliproxy'"
@@ -379,6 +381,105 @@ def test_migrate_catalog_add_cliproxy_api_key_is_idempotent():
             "SELECT COUNT(*) FROM provider_fields WHERE provider_id = 'cliproxy' AND key = 'cliproxy_api_key'"
         ).fetchone()[0]
     assert count == 1
+
+
+# ── claude-opus-4-7 catalog migration ────────────────────────────────────────
+
+def test_init_db_has_anthropic_opus_4_7():
+    """After init_db, anthropic:claude-opus-4-7 must appear in the catalog with label 'Claude Opus 4.7'."""
+    db = _tmp_db()
+    init_db(db)
+    catalog = get_catalog(db)
+    anthropic = next(p for p in catalog["providers"] if p["id"] == "anthropic")
+    model_ids = [m["model_id"] for m in anthropic["llm_models"]]
+    assert "claude-opus-4-7" in model_ids
+    opus_47 = next(m for m in anthropic["llm_models"] if m["model_id"] == "claude-opus-4-7")
+    assert opus_47["label"] == "Claude Opus 4.7"
+
+
+def test_init_db_has_cliproxy_opus_4_7():
+    """After init_db, cliproxy:claude-opus-4-7 must appear in the catalog with label 'Claude Opus 4.7'."""
+    db = _tmp_db()
+    init_db(db)
+    catalog = get_catalog(db)
+    cliproxy = next(p for p in catalog["providers"] if p["id"] == "cliproxy")
+    model_ids = [m["model_id"] for m in cliproxy["llm_models"]]
+    assert "claude-opus-4-7" in model_ids
+    opus_47 = next(m for m in cliproxy["llm_models"] if m["model_id"] == "claude-opus-4-7")
+    assert opus_47["label"] == "Claude Opus 4.7"
+
+
+def test_migrate_catalog_add_opus_4_7_inserts_on_existing_db():
+    """Migration inserts the two Opus 4.7 rows into a db seeded without them."""
+    db = _tmp_db()
+    # Bootstrap catalog tables with anthropic and cliproxy providers but no Opus 4.7 models
+    with _connect(db) as conn:
+        _create_catalog_tables(conn)
+        conn.executemany(
+            "INSERT INTO providers (id, label, type, sort_order) VALUES (?,?,?,?)",
+            [
+                ("anthropic", "Anthropic",             "llm", 1),
+                ("cliproxy",  "CLIProxy (Claude Max)",  "llm", 4),
+            ],
+        )
+        conn.executemany(
+            """INSERT INTO models (id, provider_id, model_id, label, type,
+               context_window, prompt_cost, completion_cost)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            [
+                ("anthropic:claude-opus-4-6",   "anthropic", "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
+                ("cliproxy:claude-opus-4-6",    "cliproxy",  "claude-opus-4-6",   "Claude Opus 4.6",   "llm", 200000, None, None),
+            ],
+        )
+
+    # Run migration
+    with _connect(db) as conn:
+        _migrate_catalog_add_opus_4_7(conn)
+
+    # Verify Opus 4.7 rows were inserted and existing rows are preserved
+    with _connect(db) as conn:
+        anthropic_opus_47 = conn.execute(
+            "SELECT * FROM models WHERE id = 'anthropic:claude-opus-4-7'"
+        ).fetchone()
+        assert anthropic_opus_47 is not None
+        assert anthropic_opus_47["label"] == "Claude Opus 4.7"
+        assert anthropic_opus_47["context_window"] == 200000
+
+        cliproxy_opus_47 = conn.execute(
+            "SELECT * FROM models WHERE id = 'cliproxy:claude-opus-4-7'"
+        ).fetchone()
+        assert cliproxy_opus_47 is not None
+        assert cliproxy_opus_47["label"] == "Claude Opus 4.7"
+        assert cliproxy_opus_47["context_window"] == 200000
+
+        # Original Opus 4.6 rows must still be present
+        assert conn.execute(
+            "SELECT COUNT(*) FROM models WHERE id = 'anthropic:claude-opus-4-6'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM models WHERE id = 'cliproxy:claude-opus-4-6'"
+        ).fetchone()[0] == 1
+
+
+def test_migrate_catalog_add_opus_4_7_is_idempotent():
+    """Running the migration twice must not raise or duplicate rows."""
+    db = _tmp_db()
+    init_db(db)  # Opus 4.7 already seeded via _seed_catalog
+
+    # Second run must succeed silently
+    with _connect(db) as conn:
+        _migrate_catalog_add_opus_4_7(conn)
+
+    with _connect(db) as conn:
+        anthropic_count = conn.execute(
+            "SELECT COUNT(*) FROM models WHERE id = 'anthropic:claude-opus-4-7'"
+        ).fetchone()[0]
+        assert anthropic_count == 1
+
+        cliproxy_count = conn.execute(
+            "SELECT COUNT(*) FROM models WHERE id = 'cliproxy:claude-opus-4-7'"
+        ).fetchone()[0]
+        assert cliproxy_count == 1
 
 
 # ── Application CRUD ─────────────────────────────────────────────────────────
@@ -941,3 +1042,120 @@ def test_migrate_interview_rounds_idempotent():
     with _connect(db) as conn:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(interview_rounds)").fetchall()]
     assert "scheduled_time" in cols
+
+
+# ── documents feedback migration ──────────────────────────────────────────────
+
+def test_migrate_documents_add_feedback_adds_columns_with_defaults():
+    """Migration adds all four feedback columns and existing rows get default values."""
+    db = _tmp_db()
+    # Create documents table without feedback columns to simulate a pre-migration DB.
+    with _connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applications (
+                id           TEXT PRIMARY KEY,
+                company      TEXT NOT NULL,
+                position     TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'applied',
+                url          TEXT,
+                notes        TEXT,
+                applied_date TEXT NOT NULL,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                id             TEXT PRIMARY KEY,
+                application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+                doc_type       TEXT NOT NULL CHECK (doc_type IN ('cv', 'cover_letter')),
+                title          TEXT NOT NULL DEFAULT 'Untitled',
+                latex_source   TEXT NOT NULL DEFAULT '',
+                prompt_text    TEXT NOT NULL DEFAULT '',
+                created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        # Seed an existing application and document to verify data is preserved.
+        conn.execute(
+            "INSERT INTO applications (id, company, position, status, applied_date, created_at, updated_at) "
+            "VALUES ('app-1', 'ACME', 'Dev', 'applied', '2026-01-01', datetime('now'), datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO documents (id, application_id, doc_type) VALUES ('doc-1', 'app-1', 'cv')"
+        )
+
+    # Confirm columns are absent before migration.
+    with _connect(db) as conn:
+        cols_before = [row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()]
+        assert "fit_feedback" not in cols_before
+        assert "quality_feedback" not in cols_before
+        assert "compress_feedback" not in cols_before
+        assert "last_page_count" not in cols_before
+
+    # Run the migration.
+    with _connect(db) as conn:
+        _migrate_documents_add_feedback(conn)
+
+    # Verify all columns were added and existing row has correct defaults.
+    with _connect(db) as conn:
+        cols_after = [row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()]
+        assert "fit_feedback" in cols_after
+        assert "quality_feedback" in cols_after
+        assert "compress_feedback" in cols_after
+        assert "last_page_count" in cols_after
+
+        row = conn.execute("SELECT * FROM documents WHERE id = 'doc-1'").fetchone()
+        assert row is not None
+        assert row["fit_feedback"] == ""
+        assert row["quality_feedback"] == ""
+        assert row["compress_feedback"] == ""
+        assert row["last_page_count"] == 0
+
+
+def test_migrate_documents_add_feedback_is_idempotent():
+    """Running the migration twice does not raise an error and columns remain."""
+    db = _tmp_db()
+    init_db(db)
+    with _connect(db) as conn:
+        _migrate_documents_add_feedback(conn)
+        _migrate_documents_add_feedback(conn)
+    with _connect(db) as conn:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(documents)").fetchall()]
+    assert "fit_feedback" in cols
+    assert "last_page_count" in cols
+
+
+def test_update_document_feedback_fields():
+    """update_document can persist and retrieve all four feedback columns."""
+    db = _tmp_db()
+    init_db(db)
+    create_application(**_APP_KWARGS, db_path=db)
+    doc = create_document(_APP_KWARGS["id"], "cv", db_path=db)
+
+    updated = update_document(
+        doc["id"],
+        {
+            "fit_feedback": "Great fit for senior roles",
+            "quality_feedback": "Needs stronger action verbs",
+            "compress_feedback": "Remove older positions",
+            "last_page_count": 2,
+        },
+        db,
+    )
+    assert updated is not None
+    assert updated["fit_feedback"] == "Great fit for senior roles"
+    assert updated["quality_feedback"] == "Needs stronger action verbs"
+    assert updated["compress_feedback"] == "Remove older positions"
+    assert updated["last_page_count"] == 2
+
+    # Confirm values are persisted by re-fetching.
+    fetched = get_document(doc["id"], db)
+    assert fetched["fit_feedback"] == "Great fit for senior roles"
+    assert fetched["quality_feedback"] == "Needs stronger action verbs"
+    assert fetched["compress_feedback"] == "Remove older positions"
+    assert fetched["last_page_count"] == 2

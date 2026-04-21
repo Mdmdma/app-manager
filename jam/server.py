@@ -14,7 +14,7 @@ import httpx
 from fastapi import FastAPI, APIRouter, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from jam.html_page import HTML_PAGE
 from jam.db import (
@@ -49,7 +49,7 @@ from jam.db import (
     delete_offer as db_delete_offer,
 )
 from jam.llm import extract_job_info
-from jam.kb_client import ingest_url, ingest_text
+from jam.kb_client import ingest_url, ingest_text, close_client
 
 _ENV_MAP = {
     "openai_api_key":    "OPENAI_API_KEY",
@@ -75,12 +75,12 @@ _PLAIN_KEYS = {
     "personal_full_name", "personal_email", "personal_phone",
     "personal_website", "personal_address",
     "personal_photo", "personal_signature",
-    "prompt_generate_first", "prompt_generate_revise",
-    "prompt_analyze_fit", "prompt_analyze_quality",
-    "prompt_apply_suggestions", "prompt_reduce_size",
+    "prompt_analyze_fit", "prompt_analyze_compress",
+    "prompt_generate_first:cv", "prompt_generate_first:cover_letter",
+    "prompt_generate_revise:cv", "prompt_generate_revise:cover_letter",
+    "prompt_analyze_quality:cv", "prompt_analyze_quality:cover_letter",
     "step_model_generate_or_revise", "step_model_analyze_fit",
-    "step_model_analyze_quality", "step_model_apply_suggestions",
-    "step_model_reduce_size",
+    "step_model_analyze_quality", "step_model_analyze_compress",
 }
 
 DEFAULT_CV_TEMPLATE = r"""\documentclass[10pt,a4paper]{article}
@@ -318,6 +318,8 @@ class ImportFromUrlResponse(BaseModel):
 
 class SettingsRequest(BaseModel):
     """Request body for saving settings."""
+    model_config = ConfigDict(populate_by_name=True)
+
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
@@ -343,17 +345,19 @@ class SettingsRequest(BaseModel):
     personal_address: Optional[str] = None
     personal_photo: Optional[str] = None
     personal_signature: Optional[str] = None
-    prompt_generate_first: Optional[str] = None
-    prompt_generate_revise: Optional[str] = None
     prompt_analyze_fit: Optional[str] = None
-    prompt_analyze_quality: Optional[str] = None
-    prompt_apply_suggestions: Optional[str] = None
-    prompt_reduce_size: Optional[str] = None
+    prompt_analyze_compress: Optional[str] = None
+    # Doc-type-specific prompt overrides (use alias for colon-keyed DB names)
+    prompt_generate_first_cv: Optional[str] = Field(None, alias="prompt_generate_first:cv")
+    prompt_generate_first_cl: Optional[str] = Field(None, alias="prompt_generate_first:cover_letter")
+    prompt_generate_revise_cv: Optional[str] = Field(None, alias="prompt_generate_revise:cv")
+    prompt_generate_revise_cl: Optional[str] = Field(None, alias="prompt_generate_revise:cover_letter")
+    prompt_analyze_quality_cv: Optional[str] = Field(None, alias="prompt_analyze_quality:cv")
+    prompt_analyze_quality_cl: Optional[str] = Field(None, alias="prompt_analyze_quality:cover_letter")
     step_model_generate_or_revise: Optional[str] = None
     step_model_analyze_fit: Optional[str] = None
     step_model_analyze_quality: Optional[str] = None
-    step_model_apply_suggestions: Optional[str] = None
-    step_model_reduce_size: Optional[str] = None
+    step_model_analyze_compress: Optional[str] = None
 
 
 class DocType(str, Enum):
@@ -847,7 +851,7 @@ async def get_settings_endpoint():
 @router.post("/settings")
 async def save_settings_endpoint(req: SettingsRequest):
     """Persist settings to the database."""
-    updates = req.model_dump(exclude_none=True)
+    updates = req.model_dump(exclude_none=True, by_alias=True)
     for tpl_key in ("cv_latex_template", "cover_letter_latex_template"):
         if tpl_key in updates and updates[tpl_key] == "":
             del updates[tpl_key]
@@ -870,8 +874,7 @@ async def save_settings_endpoint(req: SettingsRequest):
     # Validate per-step model overrides against catalog
     _STEP_MODEL_KEYS = [
         "step_model_generate_or_revise", "step_model_analyze_fit",
-        "step_model_analyze_quality", "step_model_apply_suggestions",
-        "step_model_reduce_size",
+        "step_model_analyze_quality", "step_model_analyze_compress",
     ]
     step_model_updates = {k: v for k, v in updates.items() if k in _STEP_MODEL_KEYS and v}
     if step_model_updates:
@@ -901,20 +904,9 @@ async def get_default_templates():
 
 @router.get("/prompts/defaults")
 async def get_default_prompts():
-    """Return the built-in default system prompts."""
-    from jam.generation import (
-        PROMPT_GENERATE_FIRST, PROMPT_GENERATE_REVISE,
-        PROMPT_ANALYZE_FIT, PROMPT_ANALYZE_QUALITY,
-        PROMPT_APPLY_SUGGESTIONS, PROMPT_REDUCE_SIZE,
-    )
-    return {
-        "prompt_generate_first": PROMPT_GENERATE_FIRST,
-        "prompt_generate_revise": PROMPT_GENERATE_REVISE,
-        "prompt_analyze_fit": PROMPT_ANALYZE_FIT,
-        "prompt_analyze_quality": PROMPT_ANALYZE_QUALITY,
-        "prompt_apply_suggestions": PROMPT_APPLY_SUGGESTIONS,
-        "prompt_reduce_size": PROMPT_REDUCE_SIZE,
-    }
+    """Return the built-in default system prompts (shared + doc-type-specific)."""
+    from jam.generation import get_all_prompt_defaults
+    return get_all_prompt_defaults()
 
 
 # ── Gmail endpoints ────────────────────────────────────────────────────────────
@@ -1378,6 +1370,8 @@ class GenerateRequest(BaseModel):
     """Request body for the document generation endpoint."""
     is_first_generation: bool = False
     critique_only: bool = False
+    fit_feedback: str | None = None       # User-edited feedback from UI
+    quality_feedback: str | None = None   # User-edited feedback from UI
 
 
 @router.post("/documents/{doc_id}/generate")
@@ -1418,10 +1412,12 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
         "inline_comments": [],
         "locked_sections": [],
         "current_latex": doc["latex_source"],
-        "fit_feedback": "",
-        "quality_feedback": "",
+        "fit_feedback": req.fit_feedback if req.fit_feedback is not None else ("" if req.is_first_generation else (doc.get("fit_feedback") or "")),
+        "quality_feedback": req.quality_feedback if req.quality_feedback is not None else ("" if req.is_first_generation else (doc.get("quality_feedback") or "")),
+        "compress_feedback": "",
+        "compact_iteration": 0,
+        "max_compact_iterations": 3,
         "page_count": 0,
-        "compile_attempts": 0,
         "compile_error": None,
         "progress_events": [],
         "final_latex": None,
@@ -1433,22 +1429,29 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
 
     async def event_stream():
         final_state = None
+        sent_count = 0
         try:
             async for chunk in graph.astream(
                 initial_state, stream_mode="values"
             ):
                 final_state = chunk
                 events = chunk.get("progress_events", [])
-                if events:
-                    evt = events[-1]
+                for evt in events[sent_count:]:
                     yield f"data: {_json.dumps(evt)}\n\n"
+                sent_count = len(events)
         except Exception as exc:
             yield f"data: {_json.dumps({'node': 'error', 'status': 'error', 'detail': str(exc)})}\n\n"
             return
 
         # Persist final result to DB
         if final_state and final_state.get("final_latex") and not req.critique_only:
-            db_update_document(doc_id, {"latex_source": final_state["final_latex"]})
+            db_update_document(doc_id, {
+                "latex_source": final_state["final_latex"],
+                "fit_feedback": final_state.get("fit_feedback", ""),
+                "quality_feedback": final_state.get("quality_feedback", ""),
+                "compress_feedback": final_state.get("compress_feedback", ""),
+                "last_page_count": final_state.get("page_count", 0),
+            })
             db_create_version(
                 document_id=doc_id,
                 latex_source=final_state["final_latex"],
@@ -1458,6 +1461,10 @@ async def generate_document_endpoint(doc_id: str, req: GenerateRequest):
                 meta = _build_pdf_metadata(position=app_row.get("position", ""))
                 _pdf_cache[doc_id] = _inject_pdf_metadata(final_state["final_pdf"], **meta)
 
+        if final_state:
+            print(f"[generate] final_state keys: {list(final_state.keys())}")
+            print(f"[generate] fit_feedback length={len(final_state.get('fit_feedback', ''))}")
+            print(f"[generate] quality_feedback length={len(final_state.get('quality_feedback', ''))}")
         result_event = {
             "node": "done",
             "status": "done",
@@ -1489,6 +1496,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router, prefix="/api/v1")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root_index():
+    """Serve the main web UI at the site root."""
+    return HTMLResponse(content=HTML_PAGE)
 
 
 @app.get("/gmail/callback", response_class=HTMLResponse)
@@ -1526,3 +1539,8 @@ async def startup():
     for db_key, env_var in _ENV_MAP.items():
         if db_key in stored:
             os.environ[env_var] = stored[db_key]
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    await close_client()

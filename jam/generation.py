@@ -1,8 +1,9 @@
 """Agentic document generation workflow using LangGraph.
 
 Orchestrates CV and cover-letter generation through a multi-node graph:
-  retrieve_kb_docs → generate_or_revise → analyze_fit → analyze_quality
-  → apply_suggestions → compile_and_check → (reduce_size loop) → finalize
+  retrieve_kb_docs → generate_or_revise → compile_and_check
+  → fan-out: [analyze_fit || analyze_quality || analyze_compress]
+  → finalize
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ import fitz  # pymupdf
 from jam.config import Settings
 
 logger = logging.getLogger(__name__)
+
+_LLM_SEM = asyncio.Semaphore(1)
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -63,14 +66,18 @@ class DocumentGenerationState(TypedDict):
     # ── Agent outputs ────────────────────────────────────────────
     fit_feedback: str
     quality_feedback: str
+    compress_feedback: str
 
     # ── Prompt details (for transparency / debugging) ──────────────
     generation_system_prompt: str | None  # system message to LLM
     generation_user_prompt: str | None    # user message to LLM (context + instructions)
 
+    # ── Compact loop ─────────────────────────────────────────────
+    compact_iteration: int   # starts at 0, incremented by analyze_compress
+    max_compact_iterations: int  # max times to loop (default 3)
+
     # ── Compile loop ─────────────────────────────────────────────
     page_count: int
-    compile_attempts: int  # number of size-reduction attempts (max 3)
     compile_error: str | None
 
     # ── SSE progress (accumulated, never replaced) ───────────────
@@ -88,25 +95,60 @@ class DocumentGenerationState(TypedDict):
 
 _COMMENT_RE = re.compile(r"%\s*\[COMMENT:\s*(.*?)\]", re.IGNORECASE)
 
-_MAX_SIZE_ATTEMPTS = 3
-
 # ---------------------------------------------------------------------------
 # Default system prompt templates (configurable via DB settings)
 # ---------------------------------------------------------------------------
 
-PROMPT_GENERATE_FIRST = """\
-You are an expert CV/cover-letter writer. Populate the LaTeX template below \
-with the candidate's real information drawn from the provided knowledge-base \
-documents. Preserve the LaTeX document structure and commands exactly — only \
+PROMPT_GENERATE_FIRST_CV = """\
+You are an expert CV writer. Populate the LaTeX template with the candidate's \
+real information from the knowledge-base documents. ONLY include facts explicitly \
+stated in the provided documents — never invent or embellish experiences, skills, \
+or achievements. Focus on: quantified achievements, strong but natural action verbs, \
+keyword alignment with the job description, and consistent bullet-point structure. \
+Write in plain, direct language — avoid emdashes, overly complex sentences, and \
+AI-sounding phrases ("leverage", "utilize", "spearhead", "passionate about", \
+"proven track record"). Preserve LaTeX structure exactly — only replace placeholder \
+text. Return ONLY the complete LaTeX document, no markdown fences, no commentary.
+{locked_sections_notice}"""
+
+PROMPT_GENERATE_FIRST_CL = """\
+You are an expert cover-letter writer. Draft a compelling cover letter using the \
+LaTeX template and the candidate's information from the knowledge-base documents. \
+ONLY include facts explicitly stated in the provided documents — never invent or \
+embellish experiences, motivations, or achievements. Focus on: narrative flow, a \
+strong opening hook, connecting the candidate's real experience to the role's \
+requirements, and a confident closing. Address the hiring manager if their name is \
+in the job description. Write in plain, natural language — avoid emdashes, overly \
+complex sentences, and AI-sounding phrases ("leverage", "utilize", "spearhead", \
+"passionate about", "proven track record"). The letter should sound like a real \
+person wrote it, not a language model. Preserve LaTeX structure exactly — only \
 replace placeholder text. Return ONLY the complete LaTeX document, no markdown \
 fences, no commentary.
 {locked_sections_notice}"""
 
-PROMPT_GENERATE_REVISE = """\
-You are an expert CV/cover-letter editor. Revise the LaTeX document according \
-to the user instructions, inline comments, fit analysis, and quality analysis \
-provided. Use the knowledge-base documents as the authoritative source of \
-candidate information. Preserve the LaTeX document structure. Return ONLY the \
+PROMPT_GENERATE_REVISE_CV = """\
+You are an expert CV editor. Revise the LaTeX document according to the user \
+instructions, inline comments, fit analysis, quality analysis, and compression \
+recommendations provided. ONLY include candidate information that appears in the \
+knowledge-base documents — never invent or embellish. Focus on: tightening bullet \
+points, adding quantification where supported by the source documents, improving \
+keyword alignment, and strengthening action verbs. Write in plain, direct language \
+— avoid emdashes, overly complex sentences, and AI-sounding phrases. Use \
+knowledge-base documents as the authoritative source. Preserve the LaTeX document \
+structure. Return ONLY the complete revised LaTeX document, no markdown fences, \
+no commentary.
+{locked_sections_notice}"""
+
+PROMPT_GENERATE_REVISE_CL = """\
+You are an expert cover-letter editor. Revise the LaTeX document according to the \
+user instructions, inline comments, fit analysis, quality analysis, and compression \
+recommendations provided. ONLY include candidate information that appears in the \
+knowledge-base documents — never invent or embellish. Focus on: narrative coherence, \
+natural tone and personality, paragraph flow, and strengthening the connection \
+between the candidate's real experience and the role. Write in plain, natural \
+language — avoid emdashes, overly complex sentences, and AI-sounding phrases. The \
+letter should sound like a real person wrote it. Use knowledge-base documents as the \
+authoritative source. Preserve the LaTeX document structure. Return ONLY the \
 complete revised LaTeX document, no markdown fences, no commentary.
 {locked_sections_notice}"""
 
@@ -115,32 +157,70 @@ You are a hiring-fit analyst. Read the candidate document and the job \
 description. List 3-5 specific, actionable improvements to better match \
 the document to the job requirements. Be concise. Plain text only — no LaTeX."""
 
-PROMPT_ANALYZE_QUALITY = """\
-You are a document-quality reviewer. Check the document for:
-1. AI-sounding phrases ("leverage", "synergy", "utilize", overuse of "passionate", etc.)
-2. Vague or unquantified claims
-3. Grammatical or spelling issues
-4. Formatting inconsistencies visible in the LaTeX source
+PROMPT_ANALYZE_QUALITY_CV = """\
+You are a CV quality reviewer. Check the document for:
+1. AI-sounding phrases ("leverage", "synergy", "utilize", "spearhead", overuse of "passionate", "proven track record") and emdashes
+2. Overly complex or nested sentence structures (prefer short, direct sentences)
+3. Vague or unquantified claims (prefer numbers, percentages, scale)
+4. Weak action verbs (prefer led, built, shipped, reduced, increased)
+5. Inconsistent bullet-point structure
+6. Grammatical or formatting issues
 List issues concisely. Plain text only — no LaTeX."""
 
-PROMPT_APPLY_SUGGESTIONS = """\
-You are a LaTeX document editor. Apply the feedback below to improve the \
-document. {locked_sections_notice}
-Return ONLY the complete revised LaTeX document, no markdown fences."""
+PROMPT_ANALYZE_QUALITY_CL = """\
+You are a cover-letter quality reviewer. Check the document for:
+1. AI-sounding phrases ("leverage", "synergy", "utilize", "spearhead", overuse of "passionate", "proven track record") and emdashes
+2. Overly complex or nested sentence structures (should read naturally, like a real person wrote it)
+3. Generic or impersonal tone
+4. Repetitive sentence structures or ideas
+5. Weak opening or closing paragraphs
+6. Disconnects between claimed motivation and the actual role
+7. Grammatical or formatting issues
+List issues concisely. Plain text only — no LaTeX."""
 
-PROMPT_REDUCE_SIZE = """\
-The document is {page_count} page(s) but must fit on exactly 1 page. \
-Reduce content to fit: tighten wording, shorten bullet points, remove less \
-important items. Do NOT remove entire sections unless unavoidable. \
-{locked_sections_notice}
-Return ONLY the complete revised LaTeX document, no markdown fences."""
+PROMPT_ANALYZE_COMPRESS = """\
+The document compiles to {page_count} page(s) but must fit on exactly 1 page. \
+This is compression attempt {compact_iteration} of {max_compact_iterations}. \
+Analyze the document and recommend specific content to cut or shorten. \
+Prioritize: tightening wording, shortening bullet points, removing less \
+important items. Do NOT recommend removing locked sections. \
+List recommendations concisely as plain text — no LaTeX.
+{locked_sections_notice}"""
+
+_PROMPT_DEFAULTS: dict[str, dict[str, str]] = {
+    "prompt_generate_first":  {"cv": PROMPT_GENERATE_FIRST_CV, "cover_letter": PROMPT_GENERATE_FIRST_CL},
+    "prompt_generate_revise": {"cv": PROMPT_GENERATE_REVISE_CV, "cover_letter": PROMPT_GENERATE_REVISE_CL},
+    "prompt_analyze_quality":  {"cv": PROMPT_ANALYZE_QUALITY_CV, "cover_letter": PROMPT_ANALYZE_QUALITY_CL},
+}
 
 
-def _get_prompt(key: str, default: str) -> str:
-    """Load a prompt template from DB settings, falling back to default."""
+def _get_prompt(key: str, default: str, doc_type: str = "") -> str:
+    """Load a prompt template from DB settings with fallback to hardcoded default."""
     from jam.db import get_all_settings
     stored = get_all_settings()
-    return stored.get(key) or default
+    # Prompts with doc-type-specific variants
+    typed_defaults = _PROMPT_DEFAULTS.get(key)
+    if typed_defaults and doc_type:
+        # Only look up the typed key — no shared fallback
+        if stored.get(f"{key}:{doc_type}"):
+            return stored[f"{key}:{doc_type}"]
+        return typed_defaults.get(doc_type, default)
+    # Shared-only prompts (analyze_fit, analyze_compress)
+    if stored.get(key):
+        return stored[key]
+    return default
+
+
+def get_all_prompt_defaults() -> dict[str, str]:
+    """Return all prompt defaults for the API."""
+    result = {
+        "prompt_analyze_fit": PROMPT_ANALYZE_FIT,
+        "prompt_analyze_compress": PROMPT_ANALYZE_COMPRESS,
+    }
+    for key, typed in _PROMPT_DEFAULTS.items():
+        for doc_type, prompt in typed.items():
+            result[f"{key}:{doc_type}"] = prompt
+    return result
 
 
 def _resolve_step_model(step_key: str) -> tuple[str | None, str | None]:
@@ -355,31 +435,53 @@ async def retrieve_kb_docs(state: DocumentGenerationState) -> dict:
 
     query = state["job_description"][:500]
 
-    # Semantic search within selected namespaces, over-fetching by padding amount
-    try:
-        search_results = await search_documents(
+    # Only run semantic search if search namespaces are configured
+    search_coro = (
+        search_documents(
             query,
             n_results=n_results + padding,
-            namespace_ids=search_ns or None,
+            namespace_ids=search_ns,
             settings=settings,
         )
-    except Exception as exc:
-        logger.warning("KB semantic search failed: %s", exc)
+        if search_ns
+        else None
+    )
+
+    # Only run namespace inclusion if include namespaces are configured
+    list_coro = (
+        list_namespace_documents(include_ns, settings=settings)
+        if include_ns
+        else None
+    )
+
+    # Dispatch concurrently whichever calls are needed
+    coros = [c for c in (search_coro, list_coro) if c is not None]
+    if coros:
+        results = await asyncio.gather(*coros, return_exceptions=True)
+    else:
+        results = []
+
+    # Unpack results back into search_results and include_docs
+    idx = 0
+    if search_coro is not None:
+        search_results = results[idx]
+        if isinstance(search_results, BaseException):
+            logger.warning("KB semantic search failed: %s", search_results)
+            search_results = []
+        idx += 1
+    else:
         search_results = []
+
+    if list_coro is not None:
+        include_docs = results[idx]
+        if isinstance(include_docs, BaseException):
+            logger.warning("KB include namespace fetch failed: %s", include_docs)
+            include_docs = []
+    else:
+        include_docs = []
 
     # Trim results back to requested count after over-fetch
     search_results = search_results[:n_results]
-
-    # Fetch full content for "include entire namespaces"
-    include_docs: list[dict] = []
-    if include_ns:
-        try:
-            include_docs = await list_namespace_documents(
-                include_ns, settings=settings
-            )
-        except Exception as exc:
-            logger.warning("KB include namespace fetch failed for %s: %s", include_ns, exc)
-            include_docs = []
 
     # Merge: include-namespace docs first, then search results (deduplicated)
     # Search API chunks use "doc_id"; list API documents use "id".
@@ -458,8 +560,10 @@ async def generate_or_revise(state: DocumentGenerationState) -> dict:
         )
     image_info = "\n".join(image_hints) if image_hints else ""
 
-    if state["is_first_generation"]:
-        template = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST)
+    compact_iteration = state.get("compact_iteration", 0)
+
+    if state["is_first_generation"] and compact_iteration == 0:
+        template = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type=state["doc_type"])
         system = template.format_map(
             defaultdict(str, locked_sections_notice=locked_str)
         )
@@ -474,41 +578,52 @@ async def generate_or_revise(state: DocumentGenerationState) -> dict:
 
 === LATEX TEMPLATE ===
 {state["latex_template"]}"""
+    elif compact_iteration > 0:
+        # Compact loop iteration — compression-focused, minimal context
+        system = (
+            "You are a document compressor. The document currently compiles to "
+            f"{state['page_count']} page(s) but must fit on exactly 1 page. "
+            "Apply the compression recommendations below to shorten the document. "
+            "Remove or shorten content as recommended. Preserve LaTeX structure and commands. "
+            "Return ONLY the complete LaTeX document, no markdown fences, no commentary."
+        )
+        if locked_str != "No sections are locked.":
+            system += f"\n{locked_str}"
+        parts = []
+        compress_fb = state.get("compress_feedback") or ""
+        if compress_fb:
+            parts.append(f"=== COMPRESS RECOMMENDATIONS ===\n{compress_fb}")
+        parts.append(f"=== CURRENT LATEX ===\n{state['current_latex']}")
+        user = "\n\n".join(parts)
     else:
+        # User-triggered revision — full revision prompt with feedback
         comments = state["inline_comments"]
         comments_str = "\n".join(f"- {c}" for c in comments) if comments else "None"
         instructions = _format_instructions(state["instructions_json"])
-        template = _get_prompt("prompt_generate_revise", PROMPT_GENERATE_REVISE)
+        template = _get_prompt("prompt_generate_revise", PROMPT_GENERATE_REVISE_CV, doc_type=state["doc_type"])
         system = template.format_map(
             defaultdict(str, locked_sections_notice=locked_str)
         )
         if image_info:
             system += f"\n{image_info}"
-        user = f"""\
-=== JOB DESCRIPTION ===
-{state["job_description"]}
-
-=== KNOWLEDGE BASE DOCUMENTS ===
-{kb_context if kb_context else "(none available)"}
-
-=== USER INSTRUCTIONS ===
-{instructions if instructions else "(none)"}
-
-=== INLINE COMMENTS FROM USER ===
-{comments_str}
-
-=== FIT AGENT FEEDBACK ===
-{state.get("fit_feedback") or "(none)"}
-
-=== QUALITY AGENT FEEDBACK ===
-{state.get("quality_feedback") or "(none)"}
-
-=== CURRENT LATEX ===
-{state["current_latex"]}"""
+        parts = [
+            f"=== JOB DESCRIPTION ===\n{state['job_description']}",
+            f"=== KNOWLEDGE BASE DOCUMENTS ===\n{kb_context if kb_context else '(none available)'}",
+            f"=== USER INSTRUCTIONS ===\n{instructions if instructions else '(none)'}",
+            f"=== INLINE COMMENTS FROM USER ===\n{comments_str}",
+            f"=== FIT AGENT FEEDBACK ===\n{state.get('fit_feedback') or '(none)'}",
+            f"=== QUALITY AGENT FEEDBACK ===\n{state.get('quality_feedback') or '(none)'}",
+        ]
+        compress_fb = state.get("compress_feedback") or ""
+        if compress_fb:
+            parts.append(f"=== COMPRESS RECOMMENDATIONS ===\n{compress_fb}")
+        parts.append(f"=== CURRENT LATEX ===\n{state['current_latex']}")
+        user = "\n\n".join(parts)
 
     try:
         step_provider, step_model = _resolve_step_model("generate_or_revise")
-        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
+        async with _LLM_SEM:
+            raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         return {
             "error": str(exc),
@@ -533,7 +648,7 @@ async def generate_or_revise(state: DocumentGenerationState) -> dict:
 async def analyze_fit(state: DocumentGenerationState) -> dict:
     from jam.llm import llm_call
 
-    system = _get_prompt("prompt_analyze_fit", PROMPT_ANALYZE_FIT)
+    system = _get_prompt("prompt_analyze_fit", PROMPT_ANALYZE_FIT, doc_type=state["doc_type"])
     user = f"""\
 === JOB DESCRIPTION ===
 {state["job_description"][:3000]}
@@ -543,7 +658,8 @@ async def analyze_fit(state: DocumentGenerationState) -> dict:
 
     try:
         step_provider, step_model = _resolve_step_model("analyze_fit")
-        feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
+        async with _LLM_SEM:
+            feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
     except Exception as exc:
         feedback = ""
         return {
@@ -561,61 +677,89 @@ async def analyze_fit(state: DocumentGenerationState) -> dict:
 async def analyze_quality(state: DocumentGenerationState) -> dict:
     from jam.llm import llm_call
 
-    system = _get_prompt("prompt_analyze_quality", PROMPT_ANALYZE_QUALITY)
+    logger.info("[analyze_quality] node entered, current_latex length=%d", len(state.get("current_latex", "")))
+    system = _get_prompt("prompt_analyze_quality", PROMPT_ANALYZE_QUALITY_CV, doc_type=state["doc_type"])
     user = f"=== DOCUMENT ===\n{state['current_latex'][:6000]}"
 
     try:
         step_provider, step_model = _resolve_step_model("analyze_quality")
-        feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
-    except Exception:
+        async with _LLM_SEM:
+            feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
+    except Exception as exc:
+        logger.error("[analyze_quality] LLM call failed: %s", exc)
         feedback = ""
+        return {
+            "quality_feedback": feedback,
+            "progress_events": [
+                {"node": "analyze_quality", "status": "error", "detail": str(exc)}
+            ],
+        }
+    logger.info("[analyze_quality] feedback length=%d, first 200 chars: %s", len(feedback), feedback[:200])
     return {
         "quality_feedback": feedback,
         "progress_events": [{"node": "analyze_quality", "status": "done"}],
     }
 
 
-async def apply_suggestions(state: DocumentGenerationState) -> dict:
-    from jam.llm import llm_call
-
-    locked = state["locked_sections"]
-    locked_str = (
-        "LOCKED sections (do NOT touch): " + ", ".join(locked)
-        if locked
-        else "No locked sections."
-    )
-    template = _get_prompt("prompt_apply_suggestions", PROMPT_APPLY_SUGGESTIONS)
-    system = template.format_map(
-        defaultdict(str, locked_sections_notice=locked_str)
-    )
-    user = f"""\
-=== FIT FEEDBACK ===
-{state["fit_feedback"] or "(none)"}
-
-=== QUALITY FEEDBACK ===
-{state["quality_feedback"] or "(none)"}
-
-=== DOCUMENT ===
-{state["current_latex"]}"""
-
-    try:
-        step_provider, step_model = _resolve_step_model("apply_suggestions")
-        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
-    except Exception as exc:
+async def analyze_compress(state: DocumentGenerationState) -> dict:
+    """Recommend compression changes when document exceeds 1 page."""
+    if state["page_count"] <= 1:
         return {
-            "progress_events": [
-                {"node": "apply_suggestions", "status": "error", "detail": str(exc)}
-            ]
+            "compress_feedback": "",
+            "progress_events": [{"node": "analyze_compress", "status": "skipped"}],
         }
 
-    latex = _strip_latex_fences(raw)
-    latex = _restore_locked_sections(
-        state["current_latex"], latex, locked, state["doc_type"]
+    from jam.llm import llm_call
+
+    compact_iteration = state.get("compact_iteration", 0)
+    max_compact_iterations = state.get("max_compact_iterations", 3)
+
+    locked = state.get("locked_sections", [])
+    locked_str = (
+        "LOCKED sections (must NOT be removed): " + ", ".join(locked)
+        if locked
+        else ""
+    )
+    template = _get_prompt("prompt_analyze_compress", PROMPT_ANALYZE_COMPRESS, doc_type=state["doc_type"])
+    system = template.format_map(
+        defaultdict(
+            str,
+            locked_sections_notice=locked_str,
+            page_count=str(state["page_count"]),
+            compact_iteration=str(compact_iteration + 1),
+            max_compact_iterations=str(max_compact_iterations),
+        )
     )
 
+    # Escalate aggressiveness based on which iteration this is
+    if compact_iteration == 1:
+        system += (
+            "\n\nPrevious compression was insufficient. Be more aggressive — "
+            "shorten bullet points and tighten wording."
+        )
+    elif compact_iteration >= 2:
+        system += (
+            "\n\nFINAL ATTEMPT — recommend removing entire bullet points or "
+            "sections if needed."
+        )
+
+    user = f"=== DOCUMENT ===\n{state['current_latex'][:6000]}"
+
+    try:
+        step_provider, step_model = _resolve_step_model("analyze_compress")
+        async with _LLM_SEM:
+            feedback = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
+    except Exception as exc:
+        feedback = ""
+        return {
+            "compact_iteration": compact_iteration + 1,
+            "compress_feedback": feedback,
+            "progress_events": [{"node": "analyze_compress", "status": "error", "detail": str(exc)}],
+        }
     return {
-        "current_latex": latex,
-        "progress_events": [{"node": "apply_suggestions", "status": "done"}],
+        "compact_iteration": compact_iteration + 1,
+        "compress_feedback": feedback,
+        "progress_events": [{"node": "analyze_compress", "status": "done"}],
     }
 
 
@@ -644,63 +788,16 @@ async def compile_and_check(state: DocumentGenerationState) -> dict:
             ],
         }
     page_count = _pdf_page_count(pdf_bytes)
-    result: dict = {
+    return {
         "compile_error": None,
         "page_count": page_count,
+        "final_pdf": pdf_bytes,
+        "final_latex": state["current_latex"],
         "progress_events": [
             {
                 "node": "compile_and_check",
                 "status": "done",
                 "detail": f"{page_count} page(s)",
-            }
-        ],
-    }
-    if page_count <= 1:
-        result["final_pdf"] = pdf_bytes
-        result["final_latex"] = state["current_latex"]
-    return result
-
-
-async def reduce_size(state: DocumentGenerationState) -> dict:
-    from jam.llm import llm_call
-
-    locked = state["locked_sections"]
-    locked_str = (
-        "LOCKED sections (must NOT be shortened): " + ", ".join(locked)
-        if locked
-        else "No locked sections."
-    )
-    attempt = state["compile_attempts"] + 1
-    template = _get_prompt("prompt_reduce_size", PROMPT_REDUCE_SIZE)
-    system = template.format_map(
-        defaultdict(str, locked_sections_notice=locked_str, page_count=str(state["page_count"]))
-    )
-    user = state["current_latex"]
-
-    try:
-        step_provider, step_model = _resolve_step_model("reduce_size")
-        raw = await llm_call(system, user, Settings(), provider=step_provider, model=step_model)
-    except Exception as exc:
-        return {
-            "compile_attempts": attempt,
-            "progress_events": [
-                {"node": "reduce_size", "status": "error", "detail": str(exc)}
-            ],
-        }
-
-    latex = _strip_latex_fences(raw)
-    latex = _restore_locked_sections(
-        state["current_latex"], latex, locked, state["doc_type"]
-    )
-
-    return {
-        "current_latex": latex,
-        "compile_attempts": attempt,
-        "progress_events": [
-            {
-                "node": "reduce_size",
-                "status": "done",
-                "detail": f"attempt {attempt}",
             }
         ],
     }
@@ -718,16 +815,17 @@ async def finalize(state: DocumentGenerationState) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _route_after_compile(state: DocumentGenerationState) -> str:
-    if state.get("error"):
-        return "end_on_error"
-    if state.get("compile_error"):
-        return "end_on_error"
-    if state["page_count"] <= 1:
-        return "finalize"
-    if state["compile_attempts"] >= _MAX_SIZE_ATTEMPTS:
-        return "finalize"
-    return "reduce_size"
+def _route_after_compile(state: DocumentGenerationState) -> "str | list[str]":
+    """Route after compilation: compact loop, parallel analysis fan-out, or END on error."""
+    from langgraph.graph import END
+    if state.get("error") or state.get("compile_error"):
+        return END
+    page_count = state.get("page_count", 0)
+    compact_iteration = state.get("compact_iteration", 0)
+    max_compact_iterations = state.get("max_compact_iterations", 3)
+    if page_count > 1 and compact_iteration < max_compact_iterations:
+        return "analyze_compress"
+    return ["analyze_fit", "analyze_quality"]
 
 
 # ---------------------------------------------------------------------------
@@ -742,32 +840,36 @@ def build_generation_graph():
 
     graph.add_node("retrieve_kb_docs", retrieve_kb_docs)
     graph.add_node("generate_or_revise", generate_or_revise)
+    graph.add_node("compile_and_check", compile_and_check)
     graph.add_node("analyze_fit", analyze_fit)
     graph.add_node("analyze_quality", analyze_quality)
-    graph.add_node("apply_suggestions", apply_suggestions)
-    graph.add_node("compile_and_check", compile_and_check)
-    graph.add_node("reduce_size", reduce_size)
+    graph.add_node("analyze_compress", analyze_compress)
     graph.add_node("finalize", finalize)
 
     graph.set_entry_point("retrieve_kb_docs")
 
     graph.add_edge("retrieve_kb_docs", "generate_or_revise")
-    graph.add_edge("generate_or_revise", "analyze_fit")
-    graph.add_edge("analyze_fit", "analyze_quality")
-    graph.add_edge("analyze_quality", "apply_suggestions")
-    graph.add_edge("apply_suggestions", "compile_and_check")
+    graph.add_edge("generate_or_revise", "compile_and_check")
 
+    # After compilation: either loop back through compress or fan out to analysis
     graph.add_conditional_edges(
         "compile_and_check",
         _route_after_compile,
         {
-            "finalize": "finalize",
-            "reduce_size": "reduce_size",
-            "end_on_error": END,
+            "analyze_compress": "analyze_compress",
+            "analyze_fit": "analyze_fit",
+            "analyze_quality": "analyze_quality",
+            END: END,
         },
     )
 
-    graph.add_edge("reduce_size", "compile_and_check")
+    # Compact loop: analyze_compress feeds back into generate_or_revise
+    graph.add_edge("analyze_compress", "generate_or_revise")
+
+    # Fan-in: parallel analysis branches converge at finalize
+    graph.add_edge("analyze_fit", "finalize")
+    graph.add_edge("analyze_quality", "finalize")
+
     graph.add_edge("finalize", END)
 
     return graph.compile()

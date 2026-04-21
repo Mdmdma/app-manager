@@ -1,36 +1,82 @@
 # generation Knowledge
 <!-- source: jam/generation.py -->
-<!-- hash: b49d5390a0e1 -->
-<!-- updated: 2026-04-01 -->
+<!-- hash: 90e8b0a26a41 -->
+<!-- updated: 2026-04-02 -->
 
 ## Public API
 
-| Symbol | Type | Purpose |
+| Function | Signature | Purpose |
 |---|---|---|
-| `DocumentGenerationState` | TypedDict | Full state schema for generation and critique graphs |
-| `CompileError` | Exception | Raised when tectonic LaTeX compilation fails |
-| `build_generation_graph()` | function | Construct and compile the full generation LangGraph |
-| `build_critique_graph()` | function | Construct and compile the critique-only LangGraph (no generation/compilation) |
-| `generation_graph` | CompiledGraph | Module-level compiled generation graph (reused across requests) |
-| `critique_graph` | CompiledGraph | Module-level compiled critique graph (reused across requests) |
-| `retrieve_kb_docs(state)` | async node | Fetch KB documents via semantic search + include namespaces |
-| `generate_or_revise(state)` | async node | LLM call to populate template (first gen) or revise (subsequent) |
-| `analyze_fit(state)` | async node | LLM call to assess job-fit and suggest improvements |
-| `analyze_quality(state)` | async node | LLM call to check for AI-sounding phrases, vague claims, grammar |
-| `apply_suggestions(state)` | async node | LLM call to apply fit + quality feedback to the LaTeX |
-| `compile_and_check(state)` | async node | Compile LaTeX via tectonic, check page count |
-| `reduce_size(state)` | async node | LLM call to shorten document to fit 1 page |
-| `finalize(state)` | async node | Set `final_latex` from `current_latex` |
-| `PROMPT_GENERATE_FIRST` | str constant | Default system prompt for first-time generation |
-| `PROMPT_GENERATE_REVISE` | str constant | Default system prompt for revision |
-| `PROMPT_ANALYZE_FIT` | str constant | Default system prompt for fit analysis |
-| `PROMPT_ANALYZE_QUALITY` | str constant | Default system prompt for quality review |
-| `PROMPT_APPLY_SUGGESTIONS` | str constant | Default system prompt for applying suggestions |
-| `PROMPT_REDUCE_SIZE` | str constant | Default system prompt for size reduction |
+| `build_generation_graph` | `() -> CompiledGraph` | Build the full generation LangGraph (compiled once at import) |
+| `build_critique_graph` | `() -> CompiledGraph` | Build the critique-only LangGraph (no generation/compilation) |
+| `retrieve_kb_docs` | `async (state) -> dict` | Fetch KB docs via semantic search + namespace inclusion |
+| `generate_or_revise` | `async (state) -> dict` | LLM: create or revise LaTeX using KB docs and feedback |
+| `compile_and_check` | `async (state) -> dict` | Compile LaTeX via tectonic, count pages, always store PDF |
+| `analyze_fit` | `async (state) -> dict` | LLM: evaluate document-to-job fit (3-5 improvements) |
+| `analyze_quality` | `async (state) -> dict` | LLM: check for AI phrases, vague claims, grammar |
+| `analyze_compress` | `async (state) -> dict` | LLM: recommend compression if page_count > 1; no-op if <= 1 |
+| `finalize` | `async (state) -> dict` | Terminal node: copy current_latex to final_latex |
+| `get_all_prompt_defaults` | `() -> dict[str, str]` | Return all 11 prompt defaults (shared + doc-type-specific) for API |
 
-## State TypedDict — `DocumentGenerationState`
+### Internal helpers
 
-### Inputs (set once before graph runs)
+| Function | Purpose |
+|---|---|
+| `_get_prompt(key, default, doc_type="")` | Load prompt via 4-tier resolution: typed DB → shared DB → typed hardcoded → shared default |
+| `_resolve_step_model(step_key)` | Return `(provider, model)` override or `(None, None)` |
+| `_extract_inline_comments(latex)` | Extract `% [COMMENT: ...]` markers |
+| `_locked_sections(instructions_json)` | Return section keys where `enabled==False` |
+| `_extract_kb_doc_content(doc)` | Extract usable text from KB doc (text -> content -> summary -> title) |
+| `_format_instructions(instructions_json)` | Format enabled section instructions for LLM prompt |
+| `_restore_locked_sections(original, revised, keys, doc_type)` | Re-insert locked section content from original into revised LaTeX |
+| `_strip_latex_fences(text)` | Remove markdown code fences |
+| `_compile_latex_bytes(latex, images?)` | Run tectonic subprocess, return PDF bytes |
+| `_pdf_page_count(pdf_bytes)` | Count pages using pymupdf/fitz |
+| `_route_after_compile(state)` | Conditional router: compact loop, parallel analysis fan-out, or END on error |
+
+## Key Constants / Schema
+
+### Module-level
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `CompileError` | Exception class | Raised by `_compile_latex_bytes` on tectonic failure |
+| `_COMMENT_RE` | `r"%\s*\[COMMENT:\s*(.*?)\]"` | Regex for inline comment extraction |
+
+### Prompt constants (DB-configurable, doc-type-aware)
+
+**Shared-only prompts (no doc-type variants):**
+
+| Constant | DB Key | Placeholders |
+|---|---|---|
+| `PROMPT_ANALYZE_FIT` | `prompt_analyze_fit` | (none) |
+| `PROMPT_ANALYZE_COMPRESS` | `prompt_analyze_compress` | `{page_count}`, `{compact_iteration}`, `{max_compact_iterations}`, `{locked_sections_notice}` |
+
+**Doc-type-specific prompts (6 constants, no shared fallback):**
+
+| Constant | DB Key | Doc Type |
+|---|---|---|
+| `PROMPT_GENERATE_FIRST_CV` | `prompt_generate_first:cv` | CV |
+| `PROMPT_GENERATE_FIRST_CL` | `prompt_generate_first:cover_letter` | Cover letter |
+| `PROMPT_GENERATE_REVISE_CV` | `prompt_generate_revise:cv` | CV |
+| `PROMPT_GENERATE_REVISE_CL` | `prompt_generate_revise:cover_letter` | Cover letter |
+| `PROMPT_ANALYZE_QUALITY_CV` | `prompt_analyze_quality:cv` | CV |
+| `PROMPT_ANALYZE_QUALITY_CL` | `prompt_analyze_quality:cover_letter` | Cover letter |
+
+Doc-type prompts enforce: only use retrieved KB information, avoid AI-sounding text (emdashes, complex sentences, filler phrases).
+
+**Resolution** (`_get_prompt`): two modes based on whether `_PROMPT_DEFAULTS` has an entry for the key:
+- Split prompts: typed DB (`key:doc_type`) → typed hardcoded default. No shared DB fallback.
+- Shared prompts: shared DB (`key`) → shared hardcoded default.
+
+**`_PROMPT_DEFAULTS`** dict maps 3 base keys to `{doc_type: constant}` for the split prompts only.
+
+**`get_all_prompt_defaults()`** — public helper returning all 8 keys (2 shared + 6 typed) for the API.
+
+Per-step model override keys: `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_analyze_compress`
+
+### `DocumentGenerationState` TypedDict
+
 | Field | Type | Purpose |
 |---|---|---|
 | `doc_id` | `str` | Document UUID |
@@ -38,177 +84,76 @@
 | `doc_type` | `str` | `"cv"` or `"cover_letter"` |
 | `latex_template` | `str` | Original LaTeX source (unchanged reference) |
 | `job_description` | `str` | Full job description text |
-| `instructions_json` | `str` | `prompt_text` JSON from DB (sections with enabled flags) |
-| `is_first_generation` | `bool` | True = populate template; False = revise existing |
+| `instructions_json` | `str` | prompt_text JSON from DB |
+| `is_first_generation` | `bool` | True = first gen, False = revision |
+| `personal_photo` | `str` | Base64 data URI or `""` |
+| `personal_signature` | `str` | Base64 data URI or `""` |
+| `kb_docs` | `list[dict]` | Retrieved KB documents |
+| `inline_comments` | `list[str]` | Extracted `% [COMMENT: ...]` markers |
+| `locked_sections` | `list[str]` | Section keys where `enabled==False` |
+| `current_latex` | `str` | Mutable working copy of LaTeX |
+| `fit_feedback` | `str` | Output from `analyze_fit` |
+| `quality_feedback` | `str` | Output from `analyze_quality` |
+| `compress_feedback` | `str` | Output from `analyze_compress` (empty if <= 1 page) |
+| `generation_system_prompt` | `str \| None` | System prompt sent to LLM (transparency) |
+| `generation_user_prompt` | `str \| None` | User prompt sent to LLM (transparency) |
+| `compact_iteration` | `int` | Current compact-loop iteration (starts 0, incremented by analyze_compress) |
+| `max_compact_iterations` | `int` | Max compact-loop iterations (default 3) |
+| `page_count` | `int` | PDF page count from compilation |
+| `compile_error` | `str \| None` | Error message from tectonic |
+| `progress_events` | `Annotated[list[dict], operator.add]` | SSE progress (accumulated) |
+| `final_latex` | `str \| None` | Final LaTeX output |
+| `final_pdf` | `bytes \| None` | Final PDF bytes |
+| `error` | `str \| None` | Pipeline error message |
 
-### Image assets
-| Field | Type | Purpose |
-|---|---|---|
-| `personal_photo` | `str` | Base64 data URI or "" |
-| `personal_signature` | `str` | Base64 data URI or "" |
+### Graph topology
 
-### Derived / populated during execution
-| Field | Type | Purpose |
-|---|---|---|
-| `kb_docs` | `list[dict]` | KB documents fetched in `retrieve_kb_docs` |
-| `inline_comments` | `list[str]` | Extracted from `% [COMMENT: ...]` markers in LaTeX |
-| `locked_sections` | `list[str]` | Section keys where `enabled==False` in instructions JSON |
-
-### Working copy
-| Field | Type | Purpose |
-|---|---|---|
-| `current_latex` | `str` | Evolving LaTeX document through the pipeline |
-
-### Agent outputs
-| Field | Type | Purpose |
-|---|---|---|
-| `fit_feedback` | `str` | Fit analysis feedback from `analyze_fit` |
-| `quality_feedback` | `str` | Quality review feedback from `analyze_quality` |
-
-### Prompt transparency
-| Field | Type | Purpose |
-|---|---|---|
-| `generation_system_prompt` | `str \| None` | System message sent to LLM during generation |
-| `generation_user_prompt` | `str \| None` | User message sent to LLM (context + instructions) |
-
-### Compile loop
-| Field | Type | Purpose |
-|---|---|---|
-| `page_count` | `int` | Number of pages in compiled PDF |
-| `compile_attempts` | `int` | Size-reduction attempts so far (max 3) |
-| `compile_error` | `str \| None` | Tectonic error message if compilation failed |
-
-### SSE progress
-| Field | Type | Purpose |
-|---|---|---|
-| `progress_events` | `Annotated[list[dict], operator.add]` | Accumulated progress events (append-only via `operator.add` reducer) |
-
-### Final output
-| Field | Type | Purpose |
-|---|---|---|
-| `final_latex` | `str \| None` | Final LaTeX source after pipeline completes |
-| `final_pdf` | `bytes \| None` | Compiled PDF bytes (set only when page_count <= 1) |
-| `error` | `str \| None` | Error message if pipeline failed |
-
-## Configurable System Prompts
-
-All 6 LLM nodes read their system prompt from DB settings via `_get_prompt(key, default)`, falling back to module-level constants if no DB value exists. Users can customize prompts through the Settings UI.
-
-| DB Key | Default Constant | Placeholders |
-|---|---|---|
-| `prompt_generate_first` | `PROMPT_GENERATE_FIRST` | `{locked_sections_notice}` |
-| `prompt_generate_revise` | `PROMPT_GENERATE_REVISE` | `{locked_sections_notice}` |
-| `prompt_analyze_fit` | `PROMPT_ANALYZE_FIT` | (none) |
-| `prompt_analyze_quality` | `PROMPT_ANALYZE_QUALITY` | (none) |
-| `prompt_apply_suggestions` | `PROMPT_APPLY_SUGGESTIONS` | `{locked_sections_notice}` |
-| `prompt_reduce_size` | `PROMPT_REDUCE_SIZE` | `{locked_sections_notice}`, `{page_count}` |
-
-Placeholders are resolved via `.format_map(defaultdict(str, ...))` — missing placeholders in custom prompts produce empty strings (no crash).
-
-## Graph Nodes
-
-### Generation graph (`build_generation_graph`)
-
-Linear pipeline with a conditional compile loop:
-
+**Generation graph (with compact loop):**
 ```
-retrieve_kb_docs
-  → generate_or_revise
-    → analyze_fit
-      → analyze_quality
-        → apply_suggestions
-          → compile_and_check
-            ├─ page_count <= 1 → finalize → END
-            ├─ compile_attempts >= 3 → finalize → END
-            ├─ error or compile_error → END (end_on_error)
-            └─ page_count > 1 → reduce_size → compile_and_check (loop)
+retrieve_kb_docs -> generate_or_revise -> compile_and_check
+  -> _route_after_compile:
+       if page_count > 1 AND compact_iteration < max: -> analyze_compress -> generate_or_revise (LOOP)
+       else: -> fan-out: [analyze_fit || analyze_quality]
+       on error: -> END
+  -> finalize -> END
 ```
 
-| Node | Role | LLM call? | Key behavior |
-|---|---|---|---|
-| `retrieve_kb_docs` | Fetch KB docs via search + include namespaces | No | Reads DB settings with Settings fallback; over-fetches by `padding`, trims to `n_results`; deduplicates by `doc_id`; extracts inline comments and locked sections; loads personal_photo and personal_signature from DB |
-| `generate_or_revise` | Populate template (first gen) or revise (subsequent) | Yes | Two distinct prompt paths based on `is_first_generation`; strips markdown fences; restores locked sections; appends image hints if photo/signature available |
-| `analyze_fit` | Assess job-fit, list 3-5 improvements | Yes | Truncates job description to 3000 chars, document to 6000 chars |
-| `analyze_quality` | Check for AI phrases, vague claims, grammar | Yes | Truncates document to 6000 chars |
-| `apply_suggestions` | Apply fit + quality feedback to LaTeX | Yes | Strips markdown fences; restores locked sections |
-| `compile_and_check` | Compile via tectonic, measure pages | No | Skips if upstream error; passes images to `_compile_latex_bytes`; sets `final_pdf` + `final_latex` if page_count <= 1 |
-| `reduce_size` | Shorten to fit 1 page | Yes | Increments `compile_attempts`; strips fences; restores locked sections |
-| `finalize` | Copy `current_latex` to `final_latex` | No | Terminal node |
+- `compile_and_check` always sets `final_pdf` and `final_latex` regardless of page count
+- `_route_after_compile` returns `END` on error/compile_error, `"analyze_compress"` for compact loop, or `["analyze_fit", "analyze_quality"]` for parallel fan-out
+- `analyze_compress` increments `compact_iteration` and loops back to `generate_or_revise`; escalates aggressiveness on later iterations
+- `analyze_compress` is a no-op (returns empty feedback) when `page_count <= 1`
+- LangGraph fan-in: `finalize` waits for both `analyze_fit` and `analyze_quality` before running
 
-### Critique graph (`build_critique_graph`)
-
-Subset pipeline for analysis-only (no generation, no compilation):
-
+**Critique graph:**
 ```
-analyze_fit → analyze_quality → finalize → END
+analyze_fit -> analyze_quality -> finalize -> END
 ```
 
-### Conditional routing — `_route_after_compile`
+### Node details
 
-| Condition | Route |
-|---|---|
-| `state["error"]` is truthy | `end_on_error` (→ END) |
-| `state["compile_error"]` is truthy | `end_on_error` (→ END) |
-| `page_count <= 1` | `finalize` |
-| `compile_attempts >= _MAX_SIZE_ATTEMPTS` (3) | `finalize` |
-| Otherwise | `reduce_size` |
-
-## Helper Functions (private)
-
-| Function | Purpose |
-|---|---|
-| `_get_prompt(key, default)` | Load prompt template from DB settings, fall back to default constant |
-| `_resolve_step_model(step_key)` | Return `(provider, model)` override for a generation step from DB settings (`step_model_{key}`), or `(None, None)` for global default. Catalog ID format: `"provider:model_id"`. |
-| `_extract_inline_comments(latex)` | Parse `% [COMMENT: ...]` markers from LaTeX source |
-| `_locked_sections(instructions_json)` | Return section keys where `enabled==False` |
-| `_extract_kb_doc_content(doc)` | Extract text from KB doc (precedence: `text` > `content` > `summary+title` > `title`) |
-| `_format_instructions(instructions_json)` | Format enabled sections for LLM prompt |
-| `_restore_locked_sections(original, revised, keys, doc_type)` | Re-insert locked section content from original into revised LaTeX; uses `\section{}` for CV, `\paragraph{}` for cover letter |
-| `_strip_latex_fences(text)` | Remove markdown code fences (``` ```latex ``` ```) that LLMs sometimes wrap around output |
-| `_compile_latex_bytes(latex_source, images)` | Async tectonic subprocess; optionally writes base64 image data URIs as files; returns PDF bytes; raises `CompileError` |
-| `_pdf_page_count(pdf_bytes)` | Count pages in PDF bytes via pymupdf/fitz |
-
-## Constants
-
-| Name | Value | Purpose |
-|---|---|---|
-| `_COMMENT_RE` | `r"%\s*\[COMMENT:\s*(.*?)\]"` | Regex for inline comment extraction |
-| `_MAX_SIZE_ATTEMPTS` | `3` | Maximum reduce_size loop iterations |
+- `retrieve_kb_docs`: 3-tier settings cascade (DB -> Settings env -> hardcoded defaults) for KB config. Over-fetches by padding, deduplicates by doc_id. **Skips calls entirely when their namespace list is empty** — only builds coroutines for configured sources. Uses `asyncio.gather()` to run whichever of `search_documents` / `list_namespace_documents` are needed concurrently (with `return_exceptions=True`).
+- `generate_or_revise`: Three branches: (1) First gen (`is_first_generation` AND `compact_iteration == 0`) uses `PROMPT_GENERATE_FIRST` + template; (2) Compact loop (`compact_iteration > 0`) uses inline compression-focused prompt with only compress recommendations + current LaTeX (no KB docs, no job description); (3) User-triggered revision uses `PROMPT_GENERATE_REVISE` + full context. All branches restore locked sections after LLM call.
+- `compile_and_check`: Calls `_compile_latex_bytes()` with optional images dict. Always stores `final_pdf` and `final_latex` in state.
+- `analyze_fit`: Truncates job desc to 3000 chars, document to 6000 chars.
+- `analyze_quality`: Truncates document to 6000 chars.
+- `analyze_compress`: Skips LLM call when `page_count <= 1`. Otherwise provides text recommendations for compression. Increments `compact_iteration`. Escalates aggressiveness: standard on pass 1, "be more aggressive" on pass 2, "FINAL ATTEMPT" on pass 3+.
+- `finalize`: Sets `final_latex` from `current_latex`.
 
 ## Dependencies
 
-- **Imports from**: `jam.config` (Settings), `jam.db` (get_all_settings — lazy import in `retrieve_kb_docs` and `_get_prompt`), `jam.kb_client` (search_documents, list_namespace_documents — lazy import), `jam.llm` (llm_call — lazy import in all LLM nodes), `langgraph.graph` (StateGraph, END — lazy import in builders), `fitz` (pymupdf — page counting), `collections.defaultdict` (safe placeholder formatting)
-- **Imported by**: `jam/server.py` (imports `generation_graph`, `critique_graph` lazily inside the generate endpoint; imports prompt constants in `/prompts/defaults` endpoint)
-
-## KB Retrieval Settings Cascade
-
-Settings are resolved with a DB-first, Settings-fallback pattern in `retrieve_kb_docs`:
-
-1. `get_all_settings()` from `jam.db` (persisted user preferences)
-2. `Settings()` from `jam.config` (environment variables)
-3. Hardcoded defaults (`n_results=5`, `padding=0`, empty namespace lists)
-
-Key settings: `kb_retrieval_namespaces` (JSON list), `kb_include_namespaces` (JSON list), `kb_retrieval_n_results` (int), `kb_retrieval_padding` (int).
+- Imports from: `jam.config` (Settings), `jam.db` (get_all_settings -- lazy), `jam.llm` (llm_call -- lazy), `jam.kb_client` (search_documents, list_namespace_documents -- lazy), `langgraph` (StateGraph, END -- lazy), `fitz` (pymupdf)
+- Imported by: `jam/server.py` (generation_graph, critique_graph, prompt constants)
 
 ## Testing
 
-- **Unit file**: `tests/unit/test_generation.py`
-- **Integration file**: `tests/integration/test_generation_kb_integration.py`
-- **Mock targets** (patch at the lazy-import location):
-  - `jam.db.get_all_settings` — KB settings lookup and prompt loading
-  - `jam.kb_client.search_documents` — semantic search
-  - `jam.kb_client.list_namespace_documents` — full namespace fetch
-  - `jam.llm.llm_call` — all LLM calls (generation, analysis, suggestions, reduction)
-  - `jam.generation.Settings` — when testing Settings fallback behavior
+- File: `tests/unit/test_generation.py`
+- Mock targets: `jam.generation.llm_call`, `jam.generation.get_all_settings`, `jam.generation.search_documents`, `jam.generation.list_namespace_documents`, `jam.generation._compile_latex_bytes`, `jam.generation._pdf_page_count`, `shutil.which`
+- Pattern: Each test constructs a `_base_state()` dict, patches LLM/KB calls, and asserts on returned state updates
 
 ## Known Limitations
 
-- `generation_graph` and `critique_graph` are compiled at module import time (line 759/781), which means `langgraph` must be importable whenever `jam.generation` is imported
-- `Settings()` is instantiated per-call inside each LLM node (no caching or injection)
-- **Per-step model selection**: Each LLM node calls `_resolve_step_model(step_key)` to check for a per-step model override in DB settings (keys: `step_model_generate_or_revise`, `step_model_analyze_fit`, `step_model_analyze_quality`, `step_model_apply_suggestions`, `step_model_reduce_size`). Overrides are passed as `provider`/`model` kwargs to `llm_call`. `None` values fall back to global settings.
-- KB context is hard-truncated to 6000 chars in `generate_or_revise` — long documents may lose context
-- Job description is truncated to 500 chars for the search query, 3000 chars in the fit-analysis prompt
-- `_compile_latex_bytes` requires `tectonic` system binary in PATH
-- The reduce-size loop caps at 3 attempts; documents exceeding 1 page after 3 attempts proceed to finalize without a valid PDF
-- All LLM nodes swallow exceptions and return partial state with error info rather than raising
-- `_get_prompt` does a full `get_all_settings()` DB read per node invocation (no caching)
+- KB context hard-capped at 6000 chars in generate_or_revise
+- Job description truncated to 500 chars for KB search query
+- Per-node exception swallowing -- LLM nodes return partial state rather than raising
+- Compact loop runs up to 3 iterations per pipeline invocation (configurable via `max_compact_iterations`)
+- Graph compiled at import time -- langgraph must be importable

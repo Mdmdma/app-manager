@@ -8,12 +8,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from jam.generation import (
+    PROMPT_ANALYZE_COMPRESS,
     PROMPT_ANALYZE_FIT,
-    PROMPT_ANALYZE_QUALITY,
-    PROMPT_APPLY_SUGGESTIONS,
-    PROMPT_GENERATE_FIRST,
-    PROMPT_GENERATE_REVISE,
-    PROMPT_REDUCE_SIZE,
+    PROMPT_ANALYZE_QUALITY_CL,
+    PROMPT_ANALYZE_QUALITY_CV,
+    PROMPT_GENERATE_FIRST_CL,
+    PROMPT_GENERATE_FIRST_CV,
+    PROMPT_GENERATE_REVISE_CL,
+    PROMPT_GENERATE_REVISE_CV,
     _compile_latex_bytes,
     _extract_inline_comments,
     _extract_kb_doc_content,
@@ -22,15 +24,16 @@ from jam.generation import (
     _locked_sections,
     _resolve_step_model,
     _restore_locked_sections,
+    _route_after_compile,
     _strip_latex_fences,
+    analyze_compress,
     analyze_fit,
     analyze_quality,
-    apply_suggestions,
     build_critique_graph,
     build_generation_graph,
     compile_and_check,
     generate_or_revise,
-    reduce_size,
+    get_all_prompt_defaults,
     retrieve_kb_docs,
 )
 
@@ -237,14 +240,16 @@ def test_build_generation_graph_structure():
     expected = {
         "retrieve_kb_docs",
         "generate_or_revise",
+        "compile_and_check",
         "analyze_fit",
         "analyze_quality",
-        "apply_suggestions",
-        "compile_and_check",
-        "reduce_size",
+        "analyze_compress",
         "finalize",
     }
     assert expected.issubset(node_names)
+    # Deleted nodes must NOT be present
+    assert "apply_suggestions" not in node_names
+    assert "reduce_size" not in node_names
 
 
 def test_build_critique_graph_structure():
@@ -279,8 +284,10 @@ def _base_state(**overrides):
         "current_latex": "",
         "fit_feedback": "",
         "quality_feedback": "",
+        "compress_feedback": "",
+        "compact_iteration": 0,
+        "max_compact_iterations": 3,
         "page_count": 0,
-        "compile_attempts": 0,
         "compile_error": None,
         "progress_events": [],
         "final_latex": None,
@@ -318,26 +325,26 @@ async def test_retrieve_kb_docs_uses_db_settings():
 
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_includes_full_namespaces():
-    """When kb_include_namespaces is set, those docs are fetched and merged."""
+    """When kb_include_namespaces is set, those docs are fetched.
+    When search_ns is empty, search_documents is skipped entirely."""
     stored = {
         "kb_retrieval_namespaces": "[]",
         "kb_include_namespaces": json.dumps(["personal-info"]),
         "kb_retrieval_n_results": "5",
     }
-    search_results = [{"doc_id": "s1", "text": "search result"}]
     include_docs = [{"doc_id": "i1", "text": "included doc"}]
 
     with patch("jam.db.get_all_settings", return_value=stored), \
-         patch("jam.kb_client.search_documents", new_callable=AsyncMock, return_value=search_results), \
+         patch("jam.kb_client.search_documents", new_callable=AsyncMock) as mock_search, \
          patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock, return_value=include_docs) as mock_list:
 
         result = await retrieve_kb_docs(_base_state())
 
+    mock_search.assert_not_called()
     mock_list.assert_called_once()
     assert mock_list.call_args[0][0] == ["personal-info"]
-    # include docs come first, then search results
+    assert len(result["kb_docs"]) == 1
     assert result["kb_docs"][0]["doc_id"] == "i1"
-    assert result["kb_docs"][1]["doc_id"] == "s1"
 
 
 @pytest.mark.asyncio
@@ -370,23 +377,23 @@ async def test_retrieve_kb_docs_deduplicates_by_doc_id():
 
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_defaults_when_no_settings():
-    """When DB has no KB settings, defaults are used (all namespaces, 5 results)."""
+    """When DB has no KB settings and no env overrides, both namespace lists are empty
+    so neither search_documents nor list_namespace_documents are called."""
     with patch("jam.db.get_all_settings", return_value={}), \
          patch("jam.kb_client.search_documents", new_callable=AsyncMock, return_value=[]) as mock_search, \
          patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock) as mock_list:
 
         result = await retrieve_kb_docs(_base_state())
 
-    mock_search.assert_called_once()
-    assert mock_search.call_args[1]["n_results"] == 5
-    assert mock_search.call_args[1]["namespace_ids"] is None  # empty list → None
+    mock_search.assert_not_called()
     mock_list.assert_not_called()
     assert result["kb_docs"] == []
 
 
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_progress_event_detail():
-    """Progress event should report both search and include counts."""
+    """Progress event should report include count when only include namespace is configured.
+    With search_ns empty, search_documents is skipped (0 searched)."""
     stored = {
         "kb_retrieval_namespaces": "[]",
         "kb_include_namespaces": json.dumps(["personal"]),
@@ -394,21 +401,23 @@ async def test_retrieve_kb_docs_progress_event_detail():
     }
 
     with patch("jam.db.get_all_settings", return_value=stored), \
-         patch("jam.kb_client.search_documents", new_callable=AsyncMock, return_value=[{"doc_id": "s1", "text": "a"}]), \
+         patch("jam.kb_client.search_documents", new_callable=AsyncMock) as mock_search, \
          patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock, return_value=[{"doc_id": "i1", "text": "b"}]):
 
         result = await retrieve_kb_docs(_base_state())
 
+    mock_search.assert_not_called()
     evt = result["progress_events"][0]
     assert evt["status"] == "done"
-    assert "2 KB docs" in evt["detail"]
-    assert "1 searched" in evt["detail"]
+    assert "1 KB docs" in evt["detail"]
+    assert "0 searched" in evt["detail"]
     assert "1 included" in evt["detail"]
 
 
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_includes_all_chunks_from_namespace():
-    """All chunks from include namespaces must appear in merged results, keyed by doc_id."""
+    """All chunks from include namespaces must appear in merged results, keyed by doc_id.
+    When search_ns is empty, search_documents is skipped so only include chunks appear."""
     stored = {
         "kb_retrieval_namespaces": "[]",
         "kb_include_namespaces": json.dumps(["academic-record"]),
@@ -421,30 +430,29 @@ async def test_retrieve_kb_docs_includes_all_chunks_from_namespace():
         {"doc_id": "doc-master", "text": "Master chunk 0", "chunk_index": 0},
         {"doc_id": "doc-master", "text": "Master chunk 1", "chunk_index": 1},
     ]
-    search_results = [{"doc_id": "doc-search", "text": "search result"}]
 
     with patch("jam.db.get_all_settings", return_value=stored), \
-         patch("jam.kb_client.search_documents", new_callable=AsyncMock, return_value=search_results), \
+         patch("jam.kb_client.search_documents", new_callable=AsyncMock) as mock_search, \
          patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock, return_value=include_docs):
 
         result = await retrieve_kb_docs(_base_state())
 
+    mock_search.assert_not_called()
     docs = result["kb_docs"]
-    # All 4 include chunks + 1 search result = 5 total
-    assert len(docs) == 5
-    # Include chunks come first
+    # All 4 include chunks (search is skipped when search_ns is empty)
+    assert len(docs) == 4
     assert docs[0]["text"] == "Bachelor chunk 0"
     assert docs[1]["text"] == "Bachelor chunk 1"
     assert docs[2]["text"] == "Master chunk 0"
     assert docs[3]["text"] == "Master chunk 1"
-    assert docs[4]["text"] == "search result"
 
 
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_padding_over_fetch_then_trim():
-    """When padding is set, should fetch n_results + padding, then trim back to n_results."""
+    """When padding is set, should fetch n_results + padding, then trim back to n_results.
+    A search namespace must be configured for search_documents to be called."""
     stored = {
-        "kb_retrieval_namespaces": "[]",
+        "kb_retrieval_namespaces": json.dumps(["ns-search"]),
         "kb_include_namespaces": "[]",
         "kb_retrieval_n_results": "3",
         "kb_retrieval_padding": "2",
@@ -633,6 +641,85 @@ async def test_generate_or_revise_first_gen_includes_kb_context():
     assert "distributed systems expertise" in user_prompt
 
 
+# ── generate_or_revise: compact loop branch ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_or_revise_compact_iteration_excludes_job_desc_and_kb():
+    """Compact loop (compact_iteration > 0) must NOT include job_description or
+    KB docs in the user prompt — only compress recommendations + current LaTeX."""
+    kb_docs = [{"text": "Senior engineer with distributed systems expertise"}]
+    state = _base_state(
+        is_first_generation=False,
+        kb_docs=kb_docs,
+        current_latex=r"\section{Summary}Long content that needs trimming",
+        compress_feedback="Remove the hobbies section. Shorten bullet points.",
+        compact_iteration=1,
+        page_count=2,
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = r"\section{Summary}Shorter content"
+        result = await generate_or_revise(state)
+
+    user_prompt = mock_llm.call_args[0][1]
+    assert "job_description" not in user_prompt.lower()
+    assert "KNOWLEDGE BASE DOCUMENTS" not in user_prompt
+    assert "distributed systems expertise" not in user_prompt
+    # The current LaTeX must be present
+    assert "CURRENT LATEX" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_or_revise_compact_iteration_includes_compress_feedback():
+    """Compact loop (compact_iteration > 0) must include compress_feedback in
+    the user prompt."""
+    state = _base_state(
+        is_first_generation=False,
+        kb_docs=[],
+        current_latex=r"\section{Summary}Long content",
+        compress_feedback="Remove hobbies section. Use 10pt font.",
+        compact_iteration=2,
+        page_count=2,
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = r"\section{Summary}Shorter"
+        result = await generate_or_revise(state)
+
+    user_prompt = mock_llm.call_args[0][1]
+    assert "COMPRESS RECOMMENDATIONS" in user_prompt
+    assert "Remove hobbies section" in user_prompt
+    assert "Use 10pt font" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_or_revise_compact_iteration_uses_compressor_system_prompt():
+    """Compact loop (compact_iteration > 0) must use the compression-focused
+    system prompt, NOT PROMPT_GENERATE_REVISE."""
+    state = _base_state(
+        is_first_generation=False,
+        kb_docs=[],
+        current_latex=r"\section{Summary}Long content",
+        compress_feedback="Shorten the summary.",
+        compact_iteration=1,
+        page_count=3,
+    )
+
+    with patch("jam.db.get_all_settings", return_value={}), \
+         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = r"\section{Summary}Shorter"
+        result = await generate_or_revise(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    # Must mention document compression context
+    assert "document compressor" in system_prompt.lower()
+    # Must NOT be the general revision prompt (check for a distinctive phrase)
+    assert "PROMPT_GENERATE_REVISE" not in system_prompt
+    # Must reference the page count
+    assert "3" in system_prompt
+
+
 # ── retrieve_kb_docs: include namespace bug-catching tests ──────────────────
 
 
@@ -668,7 +755,7 @@ async def test_retrieve_kb_docs_include_ns_called_when_configured():
 @pytest.mark.asyncio
 async def test_retrieve_kb_docs_include_only_no_search_ns():
     """When only include namespaces are configured (no search namespaces),
-    documents should still be retrieved."""
+    documents should still be retrieved and search_documents must NOT be called."""
     stored = {
         "kb_retrieval_namespaces": "[]",
         "kb_include_namespaces": json.dumps(["personal-info"]),
@@ -680,11 +767,12 @@ async def test_retrieve_kb_docs_include_only_no_search_ns():
     ]
 
     with patch("jam.db.get_all_settings", return_value=stored), \
-         patch("jam.kb_client.search_documents", new_callable=AsyncMock, return_value=[]), \
+         patch("jam.kb_client.search_documents", new_callable=AsyncMock) as mock_search, \
          patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock, return_value=include_docs):
 
         result = await retrieve_kb_docs(_base_state())
 
+    mock_search.assert_not_called()
     assert len(result["kb_docs"]) == 2
     assert result["kb_docs"][0]["text"] == "My name is Jane, I am a software engineer"
     assert result["kb_docs"][1]["text"] == "I have 10 years experience in Python"
@@ -748,6 +836,28 @@ async def test_retrieve_kb_docs_empty_include_ns_skips_list_call():
         await retrieve_kb_docs(_base_state())
 
     mock_list.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retrieve_kb_docs_empty_search_ns_skips_search_call():
+    """When kb_retrieval_namespaces is '[]', search_documents must NOT be called —
+    no embedding API call should be made even though namespace_ids=None would
+    otherwise search all namespaces."""
+    stored = {
+        "kb_retrieval_namespaces": "[]",
+        "kb_include_namespaces": "[]",
+        "kb_retrieval_n_results": "5",
+    }
+
+    with patch("jam.db.get_all_settings", return_value=stored), \
+         patch("jam.kb_client.search_documents", new_callable=AsyncMock) as mock_search, \
+         patch("jam.kb_client.list_namespace_documents", new_callable=AsyncMock) as mock_list:
+
+        result = await retrieve_kb_docs(_base_state())
+
+    mock_search.assert_not_called()
+    mock_list.assert_not_called()
+    assert result["kb_docs"] == []
 
 
 @pytest.mark.asyncio
@@ -825,41 +935,141 @@ def test_get_prompt_returns_default_when_value_is_none():
     assert result == PROMPT_ANALYZE_FIT
 
 
+# ── _get_prompt: 4-tier resolution chain ────────────────────────────────────
+
+
+def test_get_prompt_typed_db_setting_takes_priority():
+    """Typed DB setting takes priority over hardcoded typed default."""
+    stored = {
+        "prompt_generate_first:cv": "CV-specific DB prompt. {locked_sections_notice}",
+    }
+    with patch("jam.db.get_all_settings", return_value=stored):
+        result = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="cv")
+    assert result == "CV-specific DB prompt. {locked_sections_notice}"
+
+
+def test_get_prompt_typed_hardcoded_default_used_when_no_db_settings():
+    """Typed hardcoded default used when DB has no matching typed setting."""
+    with patch("jam.db.get_all_settings", return_value={}):
+        result_cv = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="cv")
+        result_cl = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="cover_letter")
+    assert result_cv == PROMPT_GENERATE_FIRST_CV
+    assert result_cl == PROMPT_GENERATE_FIRST_CL
+
+
+def test_get_prompt_shared_only_prompt_uses_db_then_hardcoded():
+    """Shared-only prompts (analyze_fit, analyze_compress): DB key -> hardcoded default."""
+    with patch("jam.db.get_all_settings", return_value={}):
+        result = _get_prompt("prompt_analyze_fit", PROMPT_ANALYZE_FIT, doc_type="cv")
+    assert result == PROMPT_ANALYZE_FIT
+
+
+def test_get_prompt_shared_only_prompt_db_override():
+    """Shared-only prompts use DB value when stored."""
+    stored = {"prompt_analyze_fit": "Custom fit prompt."}
+    with patch("jam.db.get_all_settings", return_value=stored):
+        result = _get_prompt("prompt_analyze_fit", PROMPT_ANALYZE_FIT, doc_type="cv")
+    assert result == "Custom fit prompt."
+
+
+def test_get_prompt_split_prompt_no_shared_db_fallback():
+    """For split prompts, a shared DB key does NOT override the typed hardcoded default."""
+    stored = {"prompt_generate_first": "Shared DB prompt. {locked_sections_notice}"}
+    with patch("jam.db.get_all_settings", return_value=stored):
+        # Shared DB key is ignored; falls back to typed hardcoded default
+        result_cv = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="cv")
+        result_cl = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="cover_letter")
+    assert result_cv == PROMPT_GENERATE_FIRST_CV
+    assert result_cl == PROMPT_GENERATE_FIRST_CL
+
+
+def test_get_prompt_split_prompt_empty_doc_type_falls_back_to_default_arg():
+    """When doc_type is empty for a split prompt, the `default` argument is returned."""
+    with patch("jam.db.get_all_settings", return_value={}):
+        result = _get_prompt("prompt_generate_first", PROMPT_GENERATE_FIRST_CV, doc_type="")
+    assert result == PROMPT_GENERATE_FIRST_CV
+
+
+# ── get_all_prompt_defaults ────────────────────────────────────────────────────
+
+
+def test_get_all_prompt_defaults_returns_all_keys():
+    """get_all_prompt_defaults should return 8 keys: 2 shared + 6 typed (3 prompts x 2 doc types).
+    No shared keys for generate_first, generate_revise, or analyze_quality."""
+    defaults = get_all_prompt_defaults()
+    # 2 shared-only keys
+    assert "prompt_analyze_fit" in defaults
+    assert "prompt_analyze_compress" in defaults
+    # 6 typed keys (generate_first, generate_revise, analyze_quality each have cv + cover_letter)
+    assert "prompt_generate_first:cv" in defaults
+    assert "prompt_generate_first:cover_letter" in defaults
+    assert "prompt_generate_revise:cv" in defaults
+    assert "prompt_generate_revise:cover_letter" in defaults
+    assert "prompt_analyze_quality:cv" in defaults
+    assert "prompt_analyze_quality:cover_letter" in defaults
+    # No shared keys for the 3 split prompts
+    assert "prompt_generate_first" not in defaults
+    assert "prompt_generate_revise" not in defaults
+    assert "prompt_analyze_quality" not in defaults
+    # Total 8 keys
+    assert len(defaults) == 8
+
+
+def test_get_all_prompt_defaults_values_match_constants():
+    """Each key in get_all_prompt_defaults should map to the correct constant."""
+    defaults = get_all_prompt_defaults()
+    assert defaults["prompt_analyze_fit"] == PROMPT_ANALYZE_FIT
+    assert defaults["prompt_analyze_compress"] == PROMPT_ANALYZE_COMPRESS
+    assert defaults["prompt_generate_first:cv"] == PROMPT_GENERATE_FIRST_CV
+    assert defaults["prompt_generate_first:cover_letter"] == PROMPT_GENERATE_FIRST_CL
+    assert defaults["prompt_generate_revise:cv"] == PROMPT_GENERATE_REVISE_CV
+    assert defaults["prompt_generate_revise:cover_letter"] == PROMPT_GENERATE_REVISE_CL
+    assert defaults["prompt_analyze_quality:cv"] == PROMPT_ANALYZE_QUALITY_CV
+    assert defaults["prompt_analyze_quality:cover_letter"] == PROMPT_ANALYZE_QUALITY_CL
+
+
 # ── Prompt constants ──────────────────────────────────────────────────────────
 
 
 def test_prompt_constants_are_non_empty_strings():
-    """All six prompt constants should be non-empty strings."""
+    """All prompt constants should be non-empty strings."""
     for name, constant in [
-        ("PROMPT_GENERATE_FIRST", PROMPT_GENERATE_FIRST),
-        ("PROMPT_GENERATE_REVISE", PROMPT_GENERATE_REVISE),
+        ("PROMPT_GENERATE_FIRST_CV", PROMPT_GENERATE_FIRST_CV),
+        ("PROMPT_GENERATE_FIRST_CL", PROMPT_GENERATE_FIRST_CL),
+        ("PROMPT_GENERATE_REVISE_CV", PROMPT_GENERATE_REVISE_CV),
+        ("PROMPT_GENERATE_REVISE_CL", PROMPT_GENERATE_REVISE_CL),
         ("PROMPT_ANALYZE_FIT", PROMPT_ANALYZE_FIT),
-        ("PROMPT_ANALYZE_QUALITY", PROMPT_ANALYZE_QUALITY),
-        ("PROMPT_APPLY_SUGGESTIONS", PROMPT_APPLY_SUGGESTIONS),
-        ("PROMPT_REDUCE_SIZE", PROMPT_REDUCE_SIZE),
+        ("PROMPT_ANALYZE_QUALITY_CV", PROMPT_ANALYZE_QUALITY_CV),
+        ("PROMPT_ANALYZE_QUALITY_CL", PROMPT_ANALYZE_QUALITY_CL),
+        ("PROMPT_ANALYZE_COMPRESS", PROMPT_ANALYZE_COMPRESS),
     ]:
         assert isinstance(constant, str) and constant, f"{name} must be a non-empty string"
 
 
-def test_prompt_generate_first_has_locked_sections_placeholder():
-    """PROMPT_GENERATE_FIRST must contain {locked_sections_notice} placeholder."""
-    assert "{locked_sections_notice}" in PROMPT_GENERATE_FIRST
+def test_prompt_generate_first_cv_has_locked_sections_placeholder():
+    """PROMPT_GENERATE_FIRST_CV must contain {locked_sections_notice} placeholder."""
+    assert "{locked_sections_notice}" in PROMPT_GENERATE_FIRST_CV
 
 
-def test_prompt_generate_revise_has_locked_sections_placeholder():
-    """PROMPT_GENERATE_REVISE must contain {locked_sections_notice} placeholder."""
-    assert "{locked_sections_notice}" in PROMPT_GENERATE_REVISE
+def test_prompt_generate_first_cl_has_locked_sections_placeholder():
+    """PROMPT_GENERATE_FIRST_CL must contain {locked_sections_notice} placeholder."""
+    assert "{locked_sections_notice}" in PROMPT_GENERATE_FIRST_CL
 
 
-def test_prompt_apply_suggestions_has_locked_sections_placeholder():
-    """PROMPT_APPLY_SUGGESTIONS must contain {locked_sections_notice} placeholder."""
-    assert "{locked_sections_notice}" in PROMPT_APPLY_SUGGESTIONS
+def test_prompt_generate_revise_cv_has_locked_sections_placeholder():
+    """PROMPT_GENERATE_REVISE_CV must contain {locked_sections_notice} placeholder."""
+    assert "{locked_sections_notice}" in PROMPT_GENERATE_REVISE_CV
 
 
-def test_prompt_reduce_size_has_both_placeholders():
-    """PROMPT_REDUCE_SIZE must contain both {page_count} and {locked_sections_notice}."""
-    assert "{page_count}" in PROMPT_REDUCE_SIZE
-    assert "{locked_sections_notice}" in PROMPT_REDUCE_SIZE
+def test_prompt_generate_revise_cl_has_locked_sections_placeholder():
+    """PROMPT_GENERATE_REVISE_CL must contain {locked_sections_notice} placeholder."""
+    assert "{locked_sections_notice}" in PROMPT_GENERATE_REVISE_CL
+
+
+def test_prompt_analyze_compress_has_both_placeholders():
+    """PROMPT_ANALYZE_COMPRESS must contain both {page_count} and {locked_sections_notice}."""
+    assert "{page_count}" in PROMPT_ANALYZE_COMPRESS
+    assert "{locked_sections_notice}" in PROMPT_ANALYZE_COMPRESS
 
 
 # ── generate_or_revise: DB-configurable system prompt ────────────────────────
@@ -867,11 +1077,11 @@ def test_prompt_reduce_size_has_both_placeholders():
 
 @pytest.mark.asyncio
 async def test_generate_or_revise_first_gen_uses_db_system_prompt():
-    """When prompt_generate_first is stored in DB, it should be used as the system prompt."""
+    """When prompt_generate_first:cv is stored in DB, it should be used as the system prompt."""
     custom_prompt = "Custom first-gen prompt. {locked_sections_notice}"
-    state = _base_state(is_first_generation=True, kb_docs=[])
+    state = _base_state(is_first_generation=True, kb_docs=[])  # doc_type="cv"
 
-    with patch("jam.db.get_all_settings", return_value={"prompt_generate_first": custom_prompt}), \
+    with patch("jam.db.get_all_settings", return_value={"prompt_generate_first:cv": custom_prompt}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = r"\section{Summary}Generated"
         await generate_or_revise(state)
@@ -882,8 +1092,8 @@ async def test_generate_or_revise_first_gen_uses_db_system_prompt():
 
 @pytest.mark.asyncio
 async def test_generate_or_revise_first_gen_fallback_to_default_prompt():
-    """When no DB prompt is set, should fall back to PROMPT_GENERATE_FIRST default."""
-    state = _base_state(is_first_generation=True, kb_docs=[])
+    """When no DB prompt is set, should fall back to the typed hardcoded default for the doc_type."""
+    state = _base_state(is_first_generation=True, kb_docs=[])  # doc_type="cv"
 
     with patch("jam.db.get_all_settings", return_value={}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
@@ -891,13 +1101,13 @@ async def test_generate_or_revise_first_gen_fallback_to_default_prompt():
         await generate_or_revise(state)
 
     system_prompt = mock_llm.call_args[0][0]
-    # Default contains this distinctive phrase
-    assert "expert CV/cover-letter writer" in system_prompt
+    # CV typed default contains this distinctive phrase
+    assert "expert CV writer" in system_prompt
 
 
 @pytest.mark.asyncio
 async def test_generate_or_revise_revision_uses_db_system_prompt():
-    """When prompt_generate_revise is stored in DB, it should be used as the system prompt."""
+    """When prompt_generate_revise:cv is stored in DB, it should be used as the system prompt."""
     custom_prompt = "Custom revision prompt. {locked_sections_notice}"
     state = _base_state(
         is_first_generation=False,
@@ -905,7 +1115,7 @@ async def test_generate_or_revise_revision_uses_db_system_prompt():
         current_latex=r"\section{Summary}Existing content",
     )
 
-    with patch("jam.db.get_all_settings", return_value={"prompt_generate_revise": custom_prompt}), \
+    with patch("jam.db.get_all_settings", return_value={"prompt_generate_revise:cv": custom_prompt}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = r"\section{Summary}Revised"
         await generate_or_revise(state)
@@ -918,9 +1128,9 @@ async def test_generate_or_revise_revision_uses_db_system_prompt():
 async def test_generate_or_revise_custom_prompt_without_placeholder_does_not_crash():
     """A custom prompt without {locked_sections_notice} should not raise a KeyError."""
     custom_prompt = "No placeholders here at all."
-    state = _base_state(is_first_generation=True, kb_docs=[])
+    state = _base_state(is_first_generation=True, kb_docs=[])  # doc_type="cv"
 
-    with patch("jam.db.get_all_settings", return_value={"prompt_generate_first": custom_prompt}), \
+    with patch("jam.db.get_all_settings", return_value={"prompt_generate_first:cv": custom_prompt}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = r"\section{Summary}Generated"
         result = await generate_or_revise(state)
@@ -966,11 +1176,11 @@ async def test_analyze_fit_fallback_to_default_prompt():
 
 @pytest.mark.asyncio
 async def test_analyze_quality_uses_db_system_prompt():
-    """When prompt_analyze_quality is stored in DB, it should be used as the system prompt."""
+    """When prompt_analyze_quality:cv is stored in DB, it should be used as the system prompt."""
     custom_prompt = "Custom quality review prompt."
-    state = _base_state(current_latex=r"\section{Summary}Content")
+    state = _base_state(current_latex=r"\section{Summary}Content")  # doc_type="cv"
 
-    with patch("jam.db.get_all_settings", return_value={"prompt_analyze_quality": custom_prompt}), \
+    with patch("jam.db.get_all_settings", return_value={"prompt_analyze_quality:cv": custom_prompt}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = "Quality feedback"
         await analyze_quality(state)
@@ -981,8 +1191,8 @@ async def test_analyze_quality_uses_db_system_prompt():
 
 @pytest.mark.asyncio
 async def test_analyze_quality_fallback_to_default_prompt():
-    """When no DB prompt is set, analyze_quality should use PROMPT_ANALYZE_QUALITY default."""
-    state = _base_state(current_latex=r"\section{Summary}Content")
+    """When no DB prompt is set, analyze_quality should use the typed hardcoded default for the doc_type."""
+    state = _base_state(current_latex=r"\section{Summary}Content")  # doc_type="cv"
 
     with patch("jam.db.get_all_settings", return_value={}), \
          patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
@@ -990,108 +1200,7 @@ async def test_analyze_quality_fallback_to_default_prompt():
         await analyze_quality(state)
 
     system_prompt = mock_llm.call_args[0][0]
-    assert system_prompt == PROMPT_ANALYZE_QUALITY
-
-
-# ── apply_suggestions: DB-configurable system prompt ─────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_apply_suggestions_uses_db_system_prompt():
-    """When prompt_apply_suggestions is stored in DB, it should be used as the system prompt."""
-    custom_prompt = "Custom suggestions prompt. {locked_sections_notice}"
-    state = _base_state(
-        current_latex=r"\section{Summary}Content",
-        fit_feedback="Add metrics",
-        quality_feedback="Remove jargon",
-    )
-
-    with patch("jam.db.get_all_settings", return_value={"prompt_apply_suggestions": custom_prompt}), \
-         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = r"\section{Summary}Improved"
-        await apply_suggestions(state)
-
-    system_prompt = mock_llm.call_args[0][0]
-    assert "Custom suggestions prompt." in system_prompt
-
-
-@pytest.mark.asyncio
-async def test_apply_suggestions_fallback_to_default_prompt():
-    """When no DB prompt is set, apply_suggestions should use PROMPT_APPLY_SUGGESTIONS default."""
-    state = _base_state(
-        current_latex=r"\section{Summary}Content",
-        fit_feedback="Add metrics",
-        quality_feedback="Remove jargon",
-    )
-
-    with patch("jam.db.get_all_settings", return_value={}), \
-         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = r"\section{Summary}Improved"
-        await apply_suggestions(state)
-
-    system_prompt = mock_llm.call_args[0][0]
-    assert "LaTeX document editor" in system_prompt
-
-
-# ── reduce_size: DB-configurable system prompt ────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_reduce_size_uses_db_system_prompt():
-    """When prompt_reduce_size is stored in DB, it should be used as the system prompt."""
-    custom_prompt = "Custom reduce prompt. Pages: {page_count}. {locked_sections_notice}"
-    state = _base_state(
-        current_latex=r"\section{Summary}Long content",
-        page_count=2,
-        compile_attempts=0,
-    )
-
-    with patch("jam.db.get_all_settings", return_value={"prompt_reduce_size": custom_prompt}), \
-         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = r"\section{Summary}Shorter"
-        await reduce_size(state)
-
-    system_prompt = mock_llm.call_args[0][0]
-    assert "Custom reduce prompt." in system_prompt
-    assert "2" in system_prompt  # page_count substituted
-
-
-@pytest.mark.asyncio
-async def test_reduce_size_fallback_to_default_prompt():
-    """When no DB prompt is set, reduce_size should use PROMPT_REDUCE_SIZE default."""
-    state = _base_state(
-        current_latex=r"\section{Summary}Long content",
-        page_count=2,
-        compile_attempts=0,
-    )
-
-    with patch("jam.db.get_all_settings", return_value={}), \
-         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = r"\section{Summary}Shorter"
-        await reduce_size(state)
-
-    system_prompt = mock_llm.call_args[0][0]
-    assert "2 page(s)" in system_prompt
-    assert "exactly 1 page" in system_prompt
-
-
-@pytest.mark.asyncio
-async def test_reduce_size_custom_prompt_without_placeholders_does_not_crash():
-    """A custom reduce_size prompt without placeholders should not raise a KeyError."""
-    custom_prompt = "Shorten the document please."
-    state = _base_state(
-        current_latex=r"\section{Summary}Long content",
-        page_count=3,
-        compile_attempts=1,
-    )
-
-    with patch("jam.db.get_all_settings", return_value={"prompt_reduce_size": custom_prompt}), \
-         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = r"\section{Summary}Shorter"
-        result = await reduce_size(state)
-
-    assert mock_llm.called
-    assert result.get("compile_attempts") == 2
+    assert system_prompt == PROMPT_ANALYZE_QUALITY_CV
 
 
 # ── _compile_latex_bytes: images parameter ───────────────────────────────────
@@ -1477,3 +1586,341 @@ async def test_node_uses_global_when_no_override():
     _, kwargs = mock_llm.call_args
     assert kwargs.get("provider") is None
     assert kwargs.get("model") is None
+
+
+# ── analyze_compress ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_skips_when_one_page():
+    """analyze_compress returns empty feedback when page_count <= 1."""
+    state = _base_state()
+    state["page_count"] = 1
+    result = await analyze_compress(state)
+    assert result["compress_feedback"] == ""
+    assert result["progress_events"][0]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_returns_feedback_when_over_one_page():
+    """analyze_compress calls LLM when page_count > 1."""
+    state = _base_state()
+    state["page_count"] = 2
+    state["current_latex"] = r"\documentclass{article}\begin{document}Hello\end{document}"
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="Remove bullet 3") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        result = await analyze_compress(state)
+
+    assert result["compress_feedback"] == "Remove bullet 3"
+    mock_llm.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_uses_db_prompt():
+    """When prompt_analyze_compress is stored in DB, it should be used as the system prompt."""
+    custom_prompt = "Custom compress prompt. Pages: {page_count}. {locked_sections_notice}"
+    state = _base_state(
+        current_latex=r"\section{Summary}Long content",
+        page_count=2,
+    )
+
+    with patch("jam.db.get_all_settings", return_value={"prompt_analyze_compress": custom_prompt}), \
+         patch("jam.llm.llm_call", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = "Shorten bullet points"
+        await analyze_compress(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    assert "Custom compress prompt." in system_prompt
+    assert "2" in system_prompt  # page_count substituted
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_zero_page_count_skips():
+    """analyze_compress skips (page_count == 0 is also <= 1)."""
+    state = _base_state()
+    state["page_count"] = 0
+    result = await analyze_compress(state)
+    assert result["compress_feedback"] == ""
+
+
+# ── _route_after_compile ──────────────────────────────────────────────────────
+
+
+def test_route_after_compile_returns_end_on_error():
+    from langgraph.graph import END
+    state = _base_state(error="something broke", page_count=2)
+    assert _route_after_compile(state) == END
+
+
+def test_route_after_compile_returns_end_on_compile_error():
+    from langgraph.graph import END
+    state = _base_state(error=None, compile_error="latex syntax error", page_count=2)
+    assert _route_after_compile(state) == END
+
+
+def test_route_after_compile_one_page_goes_to_analysis():
+    """Single-page document skips compact loop and fans out to analysis."""
+    state = _base_state(error=None, compile_error=None, page_count=1,
+                        compact_iteration=0, max_compact_iterations=3)
+    result = _route_after_compile(state)
+    assert set(result) == {"analyze_fit", "analyze_quality"}
+
+
+def test_route_after_compile_multipage_within_limit_goes_to_compress():
+    """Multi-page document within iteration limit routes to analyze_compress."""
+    state = _base_state(error=None, compile_error=None, page_count=2,
+                        compact_iteration=0, max_compact_iterations=3)
+    result = _route_after_compile(state)
+    assert result == "analyze_compress"
+
+
+def test_route_after_compile_multipage_at_limit_goes_to_analysis():
+    """Multi-page document that exhausted all compact iterations fans out to analysis."""
+    state = _base_state(error=None, compile_error=None, page_count=2,
+                        compact_iteration=3, max_compact_iterations=3)
+    result = _route_after_compile(state)
+    assert set(result) == {"analyze_fit", "analyze_quality"}
+
+
+# ── generate_or_revise: compress_feedback in revision prompt ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_generate_revision_includes_compress_feedback():
+    """When compress_feedback is set, revision prompt must include it."""
+    state = _base_state(
+        is_first_generation=False,
+        compress_feedback="Shorten the experience section",
+        current_latex=r"\documentclass{article}...",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="revised latex") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await generate_or_revise(state)
+
+    user_prompt = mock_llm.call_args[0][1]  # second positional arg
+    assert "COMPRESS RECOMMENDATIONS" in user_prompt
+    assert "Shorten the experience section" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_revision_omits_compress_section_when_empty():
+    """When compress_feedback is empty, the COMPRESS RECOMMENDATIONS section must NOT appear."""
+    state = _base_state(
+        is_first_generation=False,
+        compress_feedback="",
+        current_latex=r"\documentclass{article}...",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="revised latex") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await generate_or_revise(state)
+
+    user_prompt = mock_llm.call_args[0][1]
+    assert "COMPRESS RECOMMENDATIONS" not in user_prompt
+
+
+# ── _LLM_SEM semaphore ────────────────────────────────────────────────────────
+
+
+def test_llm_semaphore_exists():
+    import asyncio
+    from jam.generation import _LLM_SEM
+    assert isinstance(_LLM_SEM, asyncio.Semaphore)
+
+
+@pytest.mark.asyncio
+async def test_analyze_quality_reports_error_on_llm_failure():
+    state = _base_state()
+    state["current_latex"] = "\\documentclass{article}\\begin{document}Hello\\end{document}"
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, side_effect=Exception("timeout")) as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        result = await analyze_quality(state)
+    assert result["quality_feedback"] == ""
+    assert result["progress_events"][0]["status"] == "error"
+    assert "timeout" in result["progress_events"][0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_fit_acquires_llm_semaphore():
+    import asyncio
+    from jam.generation import _LLM_SEM
+    state = _base_state()
+    state["current_latex"] = "\\documentclass{article}..."
+    state["job_description"] = "test job"
+
+    acquired_during_call = False
+
+    async def checking_llm_call(*args, **kwargs):
+        nonlocal acquired_during_call
+        # If semaphore value is 0, it means we're holding it
+        acquired_during_call = _LLM_SEM._value == 0
+        return "feedback"
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, side_effect=checking_llm_call), \
+         patch("jam.db.get_all_settings", return_value={}):
+        await analyze_fit(state)
+    assert acquired_during_call, "LLM semaphore should be held during llm_call"
+
+
+# ── compact loop — analyze_compress iteration tracking ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_increments_compact_iteration():
+    """analyze_compress should return compact_iteration incremented by 1."""
+    state = _base_state(
+        page_count=2,
+        compact_iteration=0,
+        max_compact_iterations=3,
+        current_latex=r"\documentclass{article}\begin{document}Hello\end{document}",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="shorten bullets"), \
+         patch("jam.db.get_all_settings", return_value={}):
+        result = await analyze_compress(state)
+
+    assert result["compact_iteration"] == 1
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_no_escalation_on_first_iteration():
+    """First iteration (compact_iteration==0) uses the standard prompt — no escalation suffix."""
+    state = _base_state(
+        page_count=2,
+        compact_iteration=0,
+        max_compact_iterations=3,
+        current_latex=r"\documentclass{article}\begin{document}Hello\end{document}",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="cut bullets") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await analyze_compress(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    assert "Previous compression was insufficient" not in system_prompt
+    assert "FINAL ATTEMPT" not in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_escalates_on_second_iteration():
+    """Second iteration (compact_iteration==1) adds the 'be more aggressive' suffix."""
+    state = _base_state(
+        page_count=2,
+        compact_iteration=1,
+        max_compact_iterations=3,
+        current_latex=r"\documentclass{article}\begin{document}Hello\end{document}",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="cut more") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await analyze_compress(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    assert "Previous compression was insufficient" in system_prompt
+    assert "Be more aggressive" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_escalates_on_third_iteration():
+    """Third iteration (compact_iteration==2) adds the 'FINAL ATTEMPT' suffix."""
+    state = _base_state(
+        page_count=2,
+        compact_iteration=2,
+        max_compact_iterations=3,
+        current_latex=r"\documentclass{article}\begin{document}Hello\end{document}",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="remove sections") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await analyze_compress(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    assert "FINAL ATTEMPT" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_prompt_includes_iteration_count():
+    """The system prompt should include the current attempt number and max."""
+    state = _base_state(
+        page_count=2,
+        compact_iteration=1,
+        max_compact_iterations=3,
+        current_latex=r"\documentclass{article}\begin{document}Hello\end{document}",
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value="cut") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await analyze_compress(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    # compact_iteration=1 means this is attempt 2 (1+1)
+    assert "2" in system_prompt
+    assert "3" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_analyze_compress_skips_when_one_page_does_not_increment():
+    """When page_count <= 1, analyze_compress skips LLM and does NOT increment compact_iteration."""
+    state = _base_state(page_count=1, compact_iteration=0)
+    result = await analyze_compress(state)
+    assert result["compress_feedback"] == ""
+    assert result["progress_events"][0]["status"] == "skipped"
+    # compact_iteration must NOT be in the returned dict when skipping
+    assert "compact_iteration" not in result
+
+
+# ── compact loop — generate_or_revise uses revision path on compact iterations ─
+
+
+@pytest.mark.asyncio
+async def test_generate_or_revise_uses_compact_path_on_compact_iteration():
+    """When compact_iteration > 0, use the compression-focused prompt path (not revision)."""
+    state = _base_state(
+        is_first_generation=True,
+        compact_iteration=1,
+        compress_feedback="Shorten bullets",
+        current_latex=r"\section{Summary}Generated CV",
+        kb_docs=[{"text": "Some KB info"}],
+        page_count=2,
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value=r"\section{Summary}Shorter CV") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        result = await generate_or_revise(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    # Compact path uses the document compressor system prompt
+    assert "document compressor" in system_prompt.lower()
+    # The user prompt should include COMPRESS RECOMMENDATIONS but NOT KB docs
+    user_prompt = mock_llm.call_args[0][1]
+    assert "COMPRESS RECOMMENDATIONS" in user_prompt
+    assert "Shorten bullets" in user_prompt
+    assert "KNOWLEDGE BASE DOCUMENTS" not in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_or_revise_uses_first_gen_path_when_iteration_zero():
+    """When is_first_generation=True and compact_iteration=0, use the first-gen prompt path."""
+    state = _base_state(
+        is_first_generation=True,
+        compact_iteration=0,
+        kb_docs=[{"text": "KB doc"}],
+    )
+
+    with patch("jam.llm.llm_call", new_callable=AsyncMock, return_value=r"\section{Summary}First gen") as mock_llm, \
+         patch("jam.db.get_all_settings", return_value={}):
+        await generate_or_revise(state)
+
+    system_prompt = mock_llm.call_args[0][0]
+    assert "writer" in system_prompt.lower() or "populate" in system_prompt.lower()
+
+
+# ── compact loop — prompt constant placeholders ───────────────────────────────
+
+
+def test_prompt_analyze_compress_has_iteration_placeholders():
+    """PROMPT_ANALYZE_COMPRESS must contain {compact_iteration} and {max_compact_iterations}."""
+    assert "{compact_iteration}" in PROMPT_ANALYZE_COMPRESS
+    assert "{max_compact_iterations}" in PROMPT_ANALYZE_COMPRESS

@@ -97,6 +97,14 @@ async def test_index_returns_html(client):
 
 
 @pytest.mark.asyncio
+async def test_root_index_returns_html(client):
+    """GET / (site root) should return the HTML page."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
 async def test_health_kb_reachable(client):
     """GET /health should report kb_status ok when kb is reachable."""
     mock_resp = MagicMock(status_code=200)
@@ -1618,10 +1626,11 @@ async def test_generate_422_no_job_description(client, isolated_db):
 
 @pytest.mark.asyncio
 async def test_generate_streams_sse(client, isolated_db):
-    """SSE stream returns progress events and a final done event."""
+    """SSE stream returns ALL progress events (not just the last per chunk) and a final done event."""
     _app_id, doc_id = _make_app_and_doc(isolated_db)
 
-    # Simulate graph yielding two node chunks then a final state
+    # Simulate graph yielding two supersteps.
+    # Second chunk has TWO new events (accumulated via operator.add): both must be sent.
     async def _fake_astream(state, stream_mode=None):
         yield {
             "progress_events": [{"node": "retrieve_kb_docs", "status": "done", "detail": "0 KB docs retrieved"}],
@@ -1654,14 +1663,69 @@ async def test_generate_streams_sse(client, isolated_db):
     assert "text/event-stream" in resp.headers["content-type"]
 
     lines = [l for l in resp.text.splitlines() if l.startswith("data: ")]
-    assert len(lines) >= 2
-
     events = [json.loads(l[6:]) for l in lines]
     node_names = [e["node"] for e in events]
+
+    # Both progress events must be present (retrieve_kb_docs from chunk 1,
+    # generate_or_revise from chunk 2 — not dropped by last-only selection)
     assert "retrieve_kb_docs" in node_names
+    assert "generate_or_revise" in node_names
     # Final event should be "done"
     assert events[-1]["node"] == "done"
     assert events[-1]["fit_feedback"] == "Good fit."
+
+
+@pytest.mark.asyncio
+async def test_generate_parallel_superstep_sends_all_events(client, isolated_db):
+    """Both analyze_fit and analyze_quality events are sent when they land in the same superstep.
+
+    With stream_mode="values" LangGraph yields the full accumulated state after each
+    superstep. Parallel nodes (analyze_fit + analyze_quality) form one superstep, so
+    both their events arrive in a single chunk. The fix must send ALL new events since
+    the previous chunk, not just the last one.
+    """
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+
+    async def _fake_astream(state, stream_mode=None):
+        # Superstep 1: retrieve_kb_docs runs alone
+        yield {
+            "progress_events": [
+                {"node": "retrieve_kb_docs", "status": "done"},
+            ],
+        }
+        # Superstep 2: analyze_fit and analyze_quality run in parallel — both events
+        # land in this single chunk (operator.add accumulates them)
+        yield {
+            "progress_events": [
+                {"node": "retrieve_kb_docs", "status": "done"},
+                {"node": "analyze_fit", "status": "done"},
+                {"node": "analyze_quality", "status": "done"},
+            ],
+            "fit_feedback": "Strong match.",
+            "quality_feedback": "Well written.",
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "page_count": 1,
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
+        mock_graph.astream = _fake_astream
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": True},
+        )
+
+    assert resp.status_code == 200
+
+    lines = [l for l in resp.text.splitlines() if l.startswith("data: ")]
+    events = [json.loads(l[6:]) for l in lines]
+    node_names = [e["node"] for e in events]
+
+    # Both parallel-node events must appear — not just analyze_quality
+    assert "analyze_fit" in node_names, "analyze_fit event was dropped"
+    assert "analyze_quality" in node_names, "analyze_quality event was dropped"
+    assert events[-1]["node"] == "done"
 
 
 @pytest.mark.asyncio
@@ -1762,6 +1826,160 @@ async def test_critique_only_does_not_create_version(client, isolated_db):
 
     versions_after = list_versions(doc_id, db_path=isolated_db)
     assert len(versions_after) == len(versions_before)
+
+
+def test_generate_request_model_accepts_feedback_fields():
+    """GenerateRequest accepts optional fit_feedback and quality_feedback."""
+    from jam.server import GenerateRequest
+
+    # Both fields default to None
+    req = GenerateRequest()
+    assert req.fit_feedback is None
+    assert req.quality_feedback is None
+
+    # Fields can be set to strings
+    req2 = GenerateRequest(fit_feedback="Good match.", quality_feedback="Clean prose.")
+    assert req2.fit_feedback == "Good match."
+    assert req2.quality_feedback == "Clean prose."
+
+    # Fields can be explicitly set to None
+    req3 = GenerateRequest(fit_feedback=None, quality_feedback=None)
+    assert req3.fit_feedback is None
+    assert req3.quality_feedback is None
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_request_fit_feedback_when_provided(client, isolated_db):
+    """When fit_feedback is passed in the request, it overrides the DB value."""
+    from jam.db import update_document
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+    # Seed DB feedback values that should be overridden
+    update_document(doc_id, {"fit_feedback": "old fit", "quality_feedback": "old quality"}, db_path=isolated_db)
+
+    captured_state = {}
+
+    async def _fake_astream(state, stream_mode=None):
+        captured_state.update(state)
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": state.get("fit_feedback", ""),
+            "quality_feedback": state.get("quality_feedback", ""),
+            "page_count": 1,
+            "current_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
+        mock_graph.astream = _fake_astream
+        await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"fit_feedback": "user edited fit", "quality_feedback": "user edited quality"},
+        )
+
+    # The graph should have received the user-provided values, not the DB values
+    assert captured_state.get("fit_feedback") == "user edited fit"
+    assert captured_state.get("quality_feedback") == "user edited quality"
+
+
+@pytest.mark.asyncio
+async def test_generate_falls_back_to_db_feedback_when_not_provided(client, isolated_db):
+    """When fit_feedback is None in request, the DB value is used."""
+    from jam.db import update_document
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+    update_document(doc_id, {"fit_feedback": "db fit", "quality_feedback": "db quality"}, db_path=isolated_db)
+
+    captured_state = {}
+
+    async def _fake_astream(state, stream_mode=None):
+        captured_state.update(state)
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": state.get("fit_feedback", ""),
+            "quality_feedback": state.get("quality_feedback", ""),
+            "page_count": 1,
+            "current_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
+        mock_graph.astream = _fake_astream
+        # Do NOT pass fit_feedback / quality_feedback — should fall back to DB
+        await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": False},
+        )
+
+    assert captured_state.get("fit_feedback") == "db fit"
+    assert captured_state.get("quality_feedback") == "db quality"
+
+
+@pytest.mark.asyncio
+async def test_generate_compress_feedback_always_empty_in_initial_state(client, isolated_db):
+    """compress_feedback is always '' in the initial state regardless of DB value."""
+    from jam.db import update_document
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+    update_document(doc_id, {"compress_feedback": "old compress feedback"}, db_path=isolated_db)
+
+    captured_state = {}
+
+    async def _fake_astream(state, stream_mode=None):
+        captured_state.update(state)
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": "",
+            "quality_feedback": "",
+            "compress_feedback": state.get("compress_feedback", ""),
+            "page_count": 1,
+            "current_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
+        mock_graph.astream = _fake_astream
+        await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": False},
+        )
+
+    assert captured_state.get("compress_feedback") == ""
+
+
+@pytest.mark.asyncio
+async def test_generate_done_event_does_not_include_compress_feedback(client, isolated_db):
+    """The SSE done event must NOT contain compress_feedback."""
+    _app_id, doc_id = _make_app_and_doc(isolated_db)
+
+    async def _fake_astream(state, stream_mode=None):
+        yield {
+            "progress_events": [{"node": "finalize", "status": "done"}],
+            "final_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+            "final_pdf": b"%PDF-1.4",
+            "fit_feedback": "fit",
+            "quality_feedback": "quality",
+            "compress_feedback": "should not appear",
+            "page_count": 1,
+            "current_latex": r"\documentclass{article}\begin{document}X.\end{document}",
+        }
+
+    with patch("jam.generation.generation_graph") as mock_graph, \
+         patch("jam.server._inject_pdf_metadata", side_effect=lambda pdf, **kw: pdf):
+        mock_graph.astream = _fake_astream
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/generate",
+            json={"is_first_generation": True},
+        )
+
+    lines = [l for l in resp.text.splitlines() if l.startswith("data: ")]
+    events = [json.loads(l[6:]) for l in lines]
+    done = events[-1]
+    assert done["node"] == "done"
+    assert "compress_feedback" not in done
 
 
 # ── Extra questions endpoint tests ───────────────────────────────────────────
@@ -2151,29 +2369,36 @@ def test_build_pdf_metadata():
 
 @pytest.mark.asyncio
 async def test_get_default_prompts_returns_all_keys(client):
-    """GET /prompts/defaults should return all 6 prompt keys."""
-    fake_prompts = {
-        "PROMPT_GENERATE_FIRST": "gen-first",
-        "PROMPT_GENERATE_REVISE": "gen-revise",
-        "PROMPT_ANALYZE_FIT": "analyze-fit",
-        "PROMPT_ANALYZE_QUALITY": "analyze-quality",
-        "PROMPT_APPLY_SUGGESTIONS": "apply-suggestions",
-        "PROMPT_REDUCE_SIZE": "reduce-size",
+    """GET /prompts/defaults should return all 8 prompt keys (2 shared + 6 doc-type-specific)."""
+    fake_defaults = {
+        "prompt_analyze_fit": "analyze-fit",
+        "prompt_analyze_compress": "analyze-compress",
+        "prompt_generate_first:cv": "gen-first-cv",
+        "prompt_generate_first:cover_letter": "gen-first-cl",
+        "prompt_generate_revise:cv": "gen-revise-cv",
+        "prompt_generate_revise:cover_letter": "gen-revise-cl",
+        "prompt_analyze_quality:cv": "analyze-quality-cv",
+        "prompt_analyze_quality:cover_letter": "analyze-quality-cl",
     }
-    with patch.dict("jam.generation.__dict__", fake_prompts):
+    with patch("jam.generation.get_all_prompt_defaults", return_value=fake_defaults):
         resp = await client.get("/api/v1/prompts/defaults")
     assert resp.status_code == 200
     data = resp.json()
     expected_keys = {
-        "prompt_generate_first",
-        "prompt_generate_revise",
         "prompt_analyze_fit",
-        "prompt_analyze_quality",
-        "prompt_apply_suggestions",
-        "prompt_reduce_size",
+        "prompt_analyze_compress",
+        "prompt_generate_first:cv",
+        "prompt_generate_first:cover_letter",
+        "prompt_generate_revise:cv",
+        "prompt_generate_revise:cover_letter",
+        "prompt_analyze_quality:cv",
+        "prompt_analyze_quality:cover_letter",
     }
     assert expected_keys == set(data.keys())
-    # Values should be non-empty strings (actual generation constants)
+    # Doc-type-specific keys use colon format
+    colon_keys = {k for k in data.keys() if ":" in k}
+    assert len(colon_keys) == 6
+    # All values should be non-empty strings
     for key in expected_keys:
         assert isinstance(data[key], str)
         assert len(data[key]) > 0
@@ -2181,27 +2406,27 @@ async def test_get_default_prompts_returns_all_keys(client):
 
 @pytest.mark.asyncio
 async def test_save_prompt_setting_via_post_settings(client):
-    """POST /settings with a prompt field should persist and return it in saved."""
-    custom_prompt = "You are a CV writer. Write a great CV."
+    """POST /settings with a shared prompt field should persist and return it in saved."""
+    custom_prompt = "You are a fit analyst. Analyze the fit carefully."
     resp = await client.post(
         "/api/v1/settings",
-        json={"prompt_generate_first": custom_prompt},
+        json={"prompt_analyze_fit": custom_prompt},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
-    assert "prompt_generate_first" in data["saved"]
+    assert "prompt_analyze_fit" in data["saved"]
 
 
 @pytest.mark.asyncio
 async def test_get_settings_returns_prompt_fields(client, isolated_db):
-    """GET /settings should include prompt fields when stored."""
-    custom_prompt = "Custom generate prompt."
-    _db_module.set_setting("prompt_generate_first", custom_prompt, db_path=isolated_db)
+    """GET /settings should include shared prompt fields when stored."""
+    custom_prompt = "Custom analyze fit prompt."
+    _db_module.set_setting("prompt_analyze_fit", custom_prompt, db_path=isolated_db)
     resp = await client.get("/api/v1/settings")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["prompt_generate_first"] == custom_prompt
+    assert data["prompt_analyze_fit"] == custom_prompt
 
 
 # --- Per-step model settings ---
@@ -2269,3 +2494,64 @@ async def test_get_settings_returns_step_models(client, isolated_db):
     assert resp.status_code == 200
     data = resp.json()
     assert data["step_model_analyze_fit"] == "openai:gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_save_doc_type_specific_prompt_via_alias(client):
+    """POST /settings with colon-keyed doc-type prompt (alias) should persist with the colon key."""
+    with patch("jam.server.set_settings_batch") as mock_batch:
+        resp = await client.post(
+            "/api/v1/settings",
+            json={"prompt_generate_first:cv": "Custom CV generate prompt."},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert "prompt_generate_first:cv" in data["saved"]
+    mock_batch.assert_called_once_with({"prompt_generate_first:cv": "Custom CV generate prompt."})
+
+
+@pytest.mark.asyncio
+async def test_save_doc_type_specific_prompts_all_six(client):
+    """POST /settings with all 6 doc-type-specific prompt aliases should persist all with colon keys."""
+    payload = {
+        "prompt_generate_first:cv": "gen first cv",
+        "prompt_generate_first:cover_letter": "gen first cl",
+        "prompt_generate_revise:cv": "revise cv",
+        "prompt_generate_revise:cover_letter": "revise cl",
+        "prompt_analyze_quality:cv": "quality cv",
+        "prompt_analyze_quality:cover_letter": "quality cl",
+    }
+    with patch("jam.server.set_settings_batch") as mock_batch:
+        resp = await client.post("/api/v1/settings", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    mock_batch.assert_called_once_with(payload)
+    for key in payload:
+        assert key in data["saved"]
+
+
+@pytest.mark.asyncio
+async def test_save_doc_type_specific_prompt_via_python_name(client):
+    """POST /settings with Python field name (populate_by_name) should also work and use alias as DB key."""
+    with patch("jam.server.set_settings_batch") as mock_batch:
+        resp = await client.post(
+            "/api/v1/settings",
+            json={"prompt_generate_first_cv": "Custom CV generate prompt via python name."},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    # by_alias=True means the DB key uses the alias (colon format)
+    mock_batch.assert_called_once_with({"prompt_generate_first:cv": "Custom CV generate prompt via python name."})
+
+
+@pytest.mark.asyncio
+async def test_shutdown_calls_close_client():
+    """Server shutdown event should call close_client() to release the HTTP connection pool."""
+    from jam.server import shutdown
+    mock_close = AsyncMock()
+    with patch("jam.server.close_client", mock_close):
+        await shutdown()
+    mock_close.assert_called_once()

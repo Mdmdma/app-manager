@@ -1,6 +1,6 @@
 # db Knowledge
 <!-- source: jam/db.py -->
-<!-- hash: 9ea8548613ab -->
+<!-- hash: a4de3984de5a -->
 <!-- updated: 2026-04-01 -->
 
 ## Public API
@@ -150,6 +150,10 @@
 | `title` | TEXT | NOT NULL, DEFAULT 'Untitled' |
 | `latex_source` | TEXT | NOT NULL, DEFAULT '' |
 | `prompt_text` | TEXT | NOT NULL, DEFAULT '' |
+| `fit_feedback` | TEXT | NOT NULL, DEFAULT '' |
+| `quality_feedback` | TEXT | NOT NULL, DEFAULT '' |
+| `compress_feedback` | TEXT | NOT NULL, DEFAULT '' |
+| `last_page_count` | INTEGER | NOT NULL, DEFAULT 0 |
 | `created_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 | `updated_at` | TEXT | NOT NULL, DEFAULT datetime('now') |
 
