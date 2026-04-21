@@ -1,7 +1,7 @@
 # server-ui Knowledge
 <!-- source: jam/html_page.py -->
-<!-- hash: 1355fd1b9e8e -->
-<!-- updated: 2026-04-01 -->
+<!-- hash: 3e90bf244b73 -->
+<!-- updated: 2026-04-21 -->
 
 ## Public API
 
@@ -16,8 +16,9 @@
 - Dashboard view (`#dashboard-view`): stats row + actions bar + applications container
 - Settings view (`#settings-view`): sidebar nav + content panels
 - Detail view (`#detail-view`): sidebar with application info + step navigation + step panels
-- Detail step layout: `.detail-step.active` uses `display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden` to maintain flex chain from `.detail-content` through to inner panels
-- Flex height chain (viewport-constrained): `.detail-view` (`height: calc(100vh - 64px)`) → `.detail-container` (`height: 100%`) → `.detail-content` (`flex: 1; min-height: 0`) → `.detail-step.active` (`overflow: hidden`) → `.doc-tab-panel.active` (`overflow: hidden`) → `.trisplit-container` (`flex: 1`) → `.trisplit-pane` → `.trisplit-pane-body` (`min-height: 0`). Each element has `overflow: hidden` or `min-height: 0` to prevent content from pushing the layout taller than the viewport.
+- Detail step layout: base `.detail-step.active` is `display: block` so the parent `.detail-content` (`overflow-y: auto`) handles scrolling for long-form steps (App Details, Extra Questions, Interviews, Offers)
+- cv-cover override: `#step-cv-cover.active` uses `display: flex; flex-direction: column; flex: 1; min-height: 0` to maintain the flex height chain needed by the trisplit editor; JS toggles `.detail-content.no-outer-scroll` only for this step so inner panels own their scroll
+- Flex height chain (cv-cover only, viewport-constrained): `.detail-view` (`height: calc(100vh - 64px)`) → `.detail-container` (`height: 100%`) → `.detail-content.no-outer-scroll` (`flex: 1; min-height: 0; overflow-y: hidden`) → `#step-cv-cover.active` (flex column, `min-height: 0`) → `.doc-tab-panel.active` (`overflow: hidden`) → `.trisplit-container` (`flex: 1`) → `.trisplit-pane` → `.trisplit-pane-body` (`min-height: 0`). Each element has `overflow: hidden` or `min-height: 0` to prevent content from pushing the layout taller than the viewport.
 - `.detail-content.no-outer-scroll`: modifier class (applied via JS on cv-cover step) sets `overflow-y: hidden` so inner panels own their scroll
 - Max-width: 1200px for dashboard, 912px card pattern for settings content
 
@@ -118,33 +119,41 @@ Scrollable `.instructions-panel` div inside pane 0. Built dynamically by `_build
 
 ### Generation Progress Tracker
 Horizontal multi-step progress bar shown during document generation. One tracker per doc type: `#cv-gen-progress`, `#cover_letter-gen-progress` (placed between doc-list-bar and trisplit-container, `aria-live="polite"`).
-- Built dynamically by `_initGenProgress()` from `_GEN_STEP_ORDER` (8 steps: Retrieve KB → Generate → Analyze fit → Check quality → Apply improvements → Compile → Reduce size → Finalize)
+- Built dynamically by `_initGenProgress()` from `_GEN_STEP_ORDER` (6 steps: Retrieve KB → Generate → Compile → Analyze fit → Check quality → Finalize; `analyze_compress` removed — internal to compact loop)
 - Each step has a fixed 16×16px `.step-icon` container to prevent layout shift; states: pending (gray dot), active (indigo spinner reusing `@keyframes spin`), completed (green ✓), error (red ✗)
 - Steps separated by `›` characters (`.gen-progress-sep`)
-- `_generateDoc` uses `_initGenProgress` → `_updateGenProgress` per SSE node → `_completeGenProgress` on done / `_errorGenProgress` on error
+- `_updateGenProgress` handles compact-loop re-activation: when a previously-completed step becomes active again, resets it and all following steps to pending
+- Unknown nodes (e.g. `analyze_compress` from backend) are silently skipped by `_updateGenProgress`
+- `_generateDoc` and `_reviseDoc` both use shared `_handleGenSSE(docType, resp)` for SSE processing
 - `_critiqueDoc` still uses `_setGenStatus` text-only approach (no tracker)
-- Conditional steps (e.g. `reduce_size`) stay pending-gray if skipped; all marked green on done
 
 ### Per-Step Model Overrides (inside AI Models section)
 Collapsible `<details>` section below global provider/model dropdowns.
 - Container: `#step-model-overrides` inside `<details class="step-models-details">`
-- JS constant: `_STEP_MODEL_META` — array of `{key, label}` for 5 generation steps
+- JS constant: `_STEP_MODEL_META` — array of `{key, label}` for 4 generation steps
 - Each row: flex layout with step label + `<select class="field-input">` dropdown
 - Options: "Use global default" (value="") + `<optgroup>` per provider with models from `_catalog`
 - Values use catalog model ID format: `"provider:model_id"` (e.g. `"openai:gpt-4o"`)
 - Auto-saves on change, updates `_stored`, shows success toast via `#ai-settings-msg`
 
 ### System Prompts Settings Section (`#section-prompts`)
-Six textareas for editing the system prompts used by the agentic generation pipeline:
-- `#prompt-generate-first` — first-time generation prompt
-- `#prompt-generate-revise` — revision prompt
-- `#prompt-analyze-fit` — fit analysis prompt
-- `#prompt-analyze-quality` — quality review prompt
-- `#prompt-apply-suggestions` — apply suggestions prompt
-- `#prompt-reduce-size` — reduce size prompt
-Each has a "Reset to default" button calling `resetPrompt(key)`.
-- Defaults loaded via `GET /prompts/defaults` and cached in `_promptDefaults`
+8 textareas across 5 prompt groups, with doc-type tabbed UI for 3 of them:
+
+**Tabbed groups** (generate_first, generate_revise, analyze_quality):
+- Each has a `.prompt-tab-bar` with 2 tabs: CV | Cover Letter (no shared tab)
+- Each tab has its own `.prompt-tab-pane` with textarea + "Reset to default" button
+- CV tab/pane active by default; Cover Letter pane hidden
+- Tab switching via `switchPromptTab(btn, baseKey, docType)`
+
+**Single-textarea groups** (analyze_fit, analyze_compress):
+- Same layout as before — one textarea + reset button, no tabs
+
+Key IDs: `#prompt-generate-first--cv`, `#prompt-generate-first--cover-letter`, etc. (colons in keys mapped to `--` in element IDs via `_promptElId()`)
+
+- `_promptKeys` array: 8 keys (2 shared + 6 doc-type-specific with colon format)
+- Defaults loaded via `GET /prompts/defaults` (returns all 8 keys) and cached in `_promptDefaults`
 - Save button calls `savePromptSettings()` — only saves values differing from defaults
+- `resetPrompt(key)` works for both shared and typed keys
 - Status: `#prompt-settings-msg`
 
 ### CSS Classes (from shared design system)
@@ -155,7 +164,8 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - Status: `.status-msg`, `.status-msg.success`, `.status-msg.error`
 - Custom: `.stats-row`, `.stat-card`, `.connection-status`, `.connection-dot`, `.actions-bar`, `.applications-grid`, `.app-tile`, `.empty-state`
 - Settings: `.settings-container`, `.settings-sidebar`, `.settings-sidebar-menu`, `.settings-content`, `.settings-section`
-- Document editor: `.tab-bar`, `.tab-btn-doc`, `.doc-tab-panel`, `.trisplit-container`, `.trisplit-pane`, `.trisplit-pane-header`, `.trisplit-pane-body`, `.doc-list-bar`, `.doc-preview-frame`, `.doc-version-bar`, `.doc-compile-status`, `.agent-feedback-panel` (max-height: 40vh, overflow-y: auto, flex-shrink: 1), `.feedback-text` (max-height: 200px, overflow-y: auto)
+- Document editor: `.tab-bar`, `.tab-btn-doc`, `.doc-tab-panel`, `.trisplit-container`, `.trisplit-pane`, `.trisplit-pane-header`, `.trisplit-pane-body`, `.doc-list-bar`, `.doc-preview-frame`, `.doc-version-bar`, `.doc-compile-status`, `.agent-feedback-panel` (max-height: 40vh, overflow-y: auto, flex-shrink: 1), `.feedback-text` (max-height: 200px, overflow-y: auto, read-only `<pre>`), `.feedback-textarea` (max-height: 200px, editable `<textarea>`, resize: vertical, monospace)
+- Prompt tabs: `.prompt-tab-bar` (flex row with border-bottom), `.prompt-tab` (inactive tab), `.prompt-tab.active` (indigo border-bottom + text), `.prompt-tab-pane` (tab content container)
 - Generation progress: `.gen-progress-tracker` (flex row below doc-list-bar), `.gen-progress-step` (`.completed` green ✓, `.active` spinner, `.error` red ✗), `.gen-progress-sep` (› separator), `.step-icon` (fixed 16×16px to prevent layout shift)
 - Instructions panel: `.instructions-panel`, `.instruction-field`, `.instruction-field.global`, `.instruction-field-header`, `.instruction-field-title`, `.instruction-toggle-wrap`, `.instruction-toggle-label`, `.instruction-toggle`, `.instruction-toggle-slider`, `.instruction-textarea`
 - PDF viewer: `.pdf-placeholder` (centered message div), `.pdf-canvas-page` (per-page canvas element)
@@ -188,7 +198,8 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `loadTemplateSettings()` — populates template textareas from `_stored` or defaults
 - `saveTemplateSettings()` — POST `/settings` with template values
 - `loadPromptDefaults()` — GET `/prompts/defaults`, caches in `_promptDefaults`
-- `loadPromptSettings()` — populates 6 prompt textareas from `_stored` or defaults
+- `switchPromptTab(btn, baseKey, docType)` — switches between Shared/CV/Cover Letter prompt tabs within a tabbed group
+- `loadPromptSettings()` — populates 8 prompt textareas from `_stored` or defaults
 - `savePromptSettings()` — POST `/settings` with prompt values (only saves values that differ from defaults)
 - `resetPrompt(key)` — resets a single prompt textarea to its default value
 - `loadPersonalInfo()` — reads from `_stored` to populate personal info fields (called after `loadAiSettings` in `switchToSettings`)
@@ -220,8 +231,10 @@ Each has a "Reset to default" button calling `resetPrompt(key)`.
 - `_compileDoc(docType)` — saves doc (reads latex via `getValue()`, instructions via `_getInstructionsAsJson`), POST `/documents/:id/compile`, calls `_renderPdf` with cache-busting URL (does not create a version)
 - `_loadVersions(docType)` — GET `/documents/:id/versions`, renders version buttons
 - `_restoreVersion(docType, version)` — restores latex source via `setValue(version.latex_source)`, rebuilds instruction panel from latex, populates from version prompt_text JSON, and saves (no auto-compile)
+- `_handleGenSSE(docType, resp)` — shared SSE stream reader for both `_generateDoc` and `_reviseDoc`; updates progress, populates textareas (`.value =`), refreshes PDF, shows feedback panel
+- `_reviseDoc(docType)` — reads edited fit/quality feedback from textareas, saves editor state, POSTs to generate with `{is_first_generation: false, fit_feedback, quality_feedback}`, delegates to `_handleGenSSE`
 - `_initGenProgress(docType)` — builds step tracker from `_GEN_STEP_ORDER`, shows `#<type>-gen-progress` container
-- `_updateGenProgress(docType, activeNode)` — promotes previous active step to completed, marks new node active
+- `_updateGenProgress(docType, activeNode)` — handles loop re-activation (resets completed steps to pending if revisited), promotes previous active to completed, marks new node active; skips unknown nodes
 - `_completeGenProgress(docType)` — marks all steps completed (green) on generation done
 - `_errorGenProgress(docType)` — marks current active step as error (red)
 - `_hideGenProgress(docType)` — hides and clears the tracker

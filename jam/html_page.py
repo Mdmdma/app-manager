@@ -103,6 +103,7 @@ HTML_PAGE = """<!DOCTYPE html>
     min-height: 0;
     overflow-y: auto;
     padding: 24px 16px 48px;
+    background: #f0f2f5;
   }
 
   main.dashboard-view {
@@ -114,6 +115,7 @@ HTML_PAGE = """<!DOCTYPE html>
   main.settings-view {
     display: flex;
     width: 100%;
+    align-items: flex-start;
   }
 
   /* -- Settings layout -- */
@@ -201,6 +203,29 @@ HTML_PAGE = """<!DOCTYPE html>
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 8px;
+  }
+
+  .prompt-tab-bar {
+    display: flex;
+    gap: 0;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .prompt-tab {
+    padding: 4px 12px;
+    font-size: 0.8rem;
+    border: none;
+    background: none;
+    color: #9ca3af;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .prompt-tab:hover {
+    color: #1a1a2e;
+  }
+  .prompt-tab.active {
+    color: #4f46e5;
+    border-bottom-color: #4f46e5;
   }
 
   .setting-value {
@@ -896,11 +921,7 @@ HTML_PAGE = """<!DOCTYPE html>
   }
 
   .detail-step.active {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
+    display: block;
   }
 
   .detail-step h2 {
@@ -1381,6 +1402,20 @@ HTML_PAGE = """<!DOCTYPE html>
     border: 1px solid #e5e7eb;
     background: #ffffff;
   }
+  .feedback-textarea {
+    white-space: pre-wrap;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 6px 8px;
+    background: #ffffff;
+    font-size: 0.78rem;
+    font-family: monospace;
+    resize: vertical;
+    width: 100%;
+    box-sizing: border-box;
+  }
   .help-tip {
     display: inline-block;
     width: 15px;
@@ -1846,25 +1881,41 @@ HTML_PAGE = """<!DOCTYPE html>
           <p style="color:#6b7280; margin-bottom:16px;">
             Customize the system prompts used by the AI agents during document generation.
             Available placeholders: <code>{locked_sections_notice}</code> (auto-inserted lock info),
-            <code>{page_count}</code> (current page count, reduce_size only).
+            <code>{page_count}</code> (current page count, analyze_compress only).
           </p>
 
           <div class="setting-group">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="setting-group-label" style="margin-bottom:0;">Generate (First)</label>
-              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_generate_first')">Reset to default</button>
+            <label class="setting-group-label" style="margin-bottom:4px;">Generate (First)</label>
+            <p style="color:#6b7280; font-size:0.8rem; margin:0 0 6px 0;">Used when populating a template for the first time.</p>
+            <div class="prompt-tab-bar" data-prompt-group="prompt_generate_first">
+              <button class="prompt-tab active" onclick="switchPromptTab(this, 'prompt_generate_first', 'cv')" type="button">CV</button>
+              <button class="prompt-tab" onclick="switchPromptTab(this, 'prompt_generate_first', 'cover_letter')" type="button">Cover Letter</button>
             </div>
-            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Used when populating a template for the first time.</p>
-            <textarea id="prompt-generate-first" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+            <div class="prompt-tab-pane" id="pane-prompt-generate-first--cv">
+              <textarea id="prompt-generate-first--cv" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_generate_first:cv')" type="button">Reset to default</button>
+            </div>
+            <div class="prompt-tab-pane" id="pane-prompt-generate-first--cover-letter" style="display:none;">
+              <textarea id="prompt-generate-first--cover-letter" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_generate_first:cover_letter')" type="button">Reset to default</button>
+            </div>
           </div>
 
           <div class="setting-group">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="setting-group-label" style="margin-bottom:0;">Generate (Revise)</label>
-              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_generate_revise')">Reset to default</button>
+            <label class="setting-group-label" style="margin-bottom:4px;">Generate (Revise)</label>
+            <p style="color:#6b7280; font-size:0.8rem; margin:0 0 6px 0;">Used when revising an existing document based on user feedback.</p>
+            <div class="prompt-tab-bar" data-prompt-group="prompt_generate_revise">
+              <button class="prompt-tab active" onclick="switchPromptTab(this, 'prompt_generate_revise', 'cv')" type="button">CV</button>
+              <button class="prompt-tab" onclick="switchPromptTab(this, 'prompt_generate_revise', 'cover_letter')" type="button">Cover Letter</button>
             </div>
-            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Used when revising an existing document based on user feedback.</p>
-            <textarea id="prompt-generate-revise" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+            <div class="prompt-tab-pane" id="pane-prompt-generate-revise--cv">
+              <textarea id="prompt-generate-revise--cv" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_generate_revise:cv')" type="button">Reset to default</button>
+            </div>
+            <div class="prompt-tab-pane" id="pane-prompt-generate-revise--cover-letter" style="display:none;">
+              <textarea id="prompt-generate-revise--cover-letter" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_generate_revise:cover_letter')" type="button">Reset to default</button>
+            </div>
           </div>
 
           <div class="setting-group">
@@ -1877,30 +1928,29 @@ HTML_PAGE = """<!DOCTYPE html>
           </div>
 
           <div class="setting-group">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="setting-group-label" style="margin-bottom:0;">Analyze Quality</label>
-              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_analyze_quality')">Reset to default</button>
+            <label class="setting-group-label" style="margin-bottom:4px;">Analyze Quality</label>
+            <p style="color:#6b7280; font-size:0.8rem; margin:0 0 6px 0;">Reviews document for AI-sounding language, vague claims, grammar issues.</p>
+            <div class="prompt-tab-bar" data-prompt-group="prompt_analyze_quality">
+              <button class="prompt-tab active" onclick="switchPromptTab(this, 'prompt_analyze_quality', 'cv')" type="button">CV</button>
+              <button class="prompt-tab" onclick="switchPromptTab(this, 'prompt_analyze_quality', 'cover_letter')" type="button">Cover Letter</button>
             </div>
-            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Reviews document for AI-sounding language, vague claims, grammar issues.</p>
-            <textarea id="prompt-analyze-quality" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+            <div class="prompt-tab-pane" id="pane-prompt-analyze-quality--cv">
+              <textarea id="prompt-analyze-quality--cv" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_analyze_quality:cv')" type="button">Reset to default</button>
+            </div>
+            <div class="prompt-tab-pane" id="pane-prompt-analyze-quality--cover-letter" style="display:none;">
+              <textarea id="prompt-analyze-quality--cover-letter" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px; margin-top:4px;" onclick="resetPrompt('prompt_analyze_quality:cover_letter')" type="button">Reset to default</button>
+            </div>
           </div>
 
           <div class="setting-group">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="setting-group-label" style="margin-bottom:0;">Apply Suggestions</label>
-              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_apply_suggestions')">Reset to default</button>
+              <label class="setting-group-label" style="margin-bottom:0;">Analyze Compress</label>
+              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_analyze_compress')">Reset to default</button>
             </div>
-            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Applies fit and quality feedback to improve the document.</p>
-            <textarea id="prompt-apply-suggestions" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
-          </div>
-
-          <div class="setting-group">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="setting-group-label" style="margin-bottom:0;">Reduce Size</label>
-              <button class="btn btn-secondary" style="font-size:0.75rem; padding:2px 8px;" onclick="resetPrompt('prompt_reduce_size')">Reset to default</button>
-            </div>
-            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Shortens document to fit on one page when too long after compilation.</p>
-            <textarea id="prompt-reduce-size" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
+            <p style="color:#6b7280; font-size:0.8rem; margin:4px 0 8px 0;">Analyses the compiled document for length and suggests compression strategies when over the page limit.</p>
+            <textarea id="prompt-analyze-compress" class="field-input" rows="6" style="font-family:monospace; font-size:0.8rem; white-space:pre-wrap;"></textarea>
           </div>
 
           <div id="prompt-settings-msg" class="status-msg" style="margin-top:16px; display:none;"></div>
@@ -2101,10 +2151,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <span id="cv-version-list">--</span>
             </div>
             <div id="cv-agent-feedback" class="agent-feedback-panel" style="display:none">
-              <details open><summary>Fit Analysis</summary><pre id="cv-fit-feedback" class="feedback-text"></pre></details>
-              <details open><summary>Quality Analysis</summary><pre id="cv-quality-feedback" class="feedback-text"></pre></details>
+              <details open><summary>Fit Analysis</summary><textarea id="cv-fit-feedback" class="feedback-textarea" rows="6"></textarea></details>
+              <details open><summary>Quality Analysis</summary><textarea id="cv-quality-feedback" class="feedback-textarea" rows="6"></textarea></details>
               <details><summary>Generation Prompt (System)</summary><pre id="cv-generation-system-prompt" class="feedback-text"></pre></details>
               <details><summary>Generation Prompt (User Context)</summary><pre id="cv-generation-user-prompt" class="feedback-text"></pre></details>
+              <button class="btn btn-sm btn-generate" onclick="_reviseDoc('cv')">Revise with Feedback</button>
             </div>
           </div>
 
@@ -2149,10 +2200,11 @@ HTML_PAGE = """<!DOCTYPE html>
               <span id="cover_letter-version-list">--</span>
             </div>
             <div id="cover_letter-agent-feedback" class="agent-feedback-panel" style="display:none">
-              <details open><summary>Fit Analysis</summary><pre id="cover_letter-fit-feedback" class="feedback-text"></pre></details>
-              <details open><summary>Quality Analysis</summary><pre id="cover_letter-quality-feedback" class="feedback-text"></pre></details>
+              <details open><summary>Fit Analysis</summary><textarea id="cover_letter-fit-feedback" class="feedback-textarea" rows="6"></textarea></details>
+              <details open><summary>Quality Analysis</summary><textarea id="cover_letter-quality-feedback" class="feedback-textarea" rows="6"></textarea></details>
               <details><summary>Generation Prompt (System)</summary><pre id="cover_letter-generation-system-prompt" class="feedback-text"></pre></details>
               <details><summary>Generation Prompt (User Context)</summary><pre id="cover_letter-generation-user-prompt" class="feedback-text"></pre></details>
+              <button class="btn btn-sm btn-generate" onclick="_reviseDoc('cover_letter')">Revise with Feedback</button>
             </div>
           </div>
         </div>
@@ -3469,8 +3521,7 @@ const _STEP_MODEL_META = [
   {key: "generate_or_revise", label: "Generate / Revise"},
   {key: "analyze_fit",        label: "Analyze Fit"},
   {key: "analyze_quality",    label: "Analyze Quality"},
-  {key: "apply_suggestions",  label: "Apply Suggestions"},
-  {key: "reduce_size",        label: "Reduce Size"},
+  {key: "analyze_compress",   label: "Analyze Compress"},
 ];
 
 function renderStepModelOverrides() {
@@ -3736,13 +3787,33 @@ async function saveTemplateSettings() {
 let _promptDefaults = null;
 
 const _promptKeys = [
-  "prompt_generate_first", "prompt_generate_revise",
-  "prompt_analyze_fit", "prompt_analyze_quality",
-  "prompt_apply_suggestions", "prompt_reduce_size"
+  "prompt_generate_first:cv", "prompt_generate_first:cover_letter",
+  "prompt_generate_revise:cv", "prompt_generate_revise:cover_letter",
+  "prompt_analyze_fit",
+  "prompt_analyze_quality:cv", "prompt_analyze_quality:cover_letter",
+  "prompt_analyze_compress"
 ];
 
 function _promptElId(key) {
-  return key.replace(/_/g, "-");  // prompt_generate_first -> prompt-generate-first
+  // prompt_generate_first -> prompt-generate-first
+  // prompt_generate_first:cv -> prompt-generate-first--cv
+  return key.replace(/_/g, "-").replace(/:/g, "--");
+}
+
+function switchPromptTab(btn, baseKey, docType) {
+  // Deactivate all tabs in this group
+  var bar = btn.parentElement;
+  bar.querySelectorAll(".prompt-tab").forEach(function(t) { t.classList.remove("active"); });
+  btn.classList.add("active");
+
+  // Hide all panes in this group, show the selected one
+  var container = bar.parentElement;
+  container.querySelectorAll(".prompt-tab-pane").forEach(function(p) { p.style.display = "none"; });
+
+  var suffix = docType ? "--" + docType.replace(/_/g, "-") : "";
+  var paneId = "pane-" + baseKey.replace(/_/g, "-") + suffix;
+  var pane = document.getElementById(paneId);
+  if (pane) pane.style.display = "";
 }
 
 async function loadPromptDefaults() {
@@ -5338,11 +5409,10 @@ function _setGenStatus(docType, msg, cls) {
 var _GEN_NODE_LABELS = {
   "retrieve_kb_docs":   "Retrieving knowledge base...",
   "generate_or_revise": "Generating document...",
+  "compile_and_check":  "Compiling...",
   "analyze_fit":        "Analysing job fit...",
   "analyze_quality":    "Checking quality...",
-  "apply_suggestions":  "Applying improvements...",
-  "compile_and_check":  "Compiling...",
-  "reduce_size":        "Reducing to 1 page...",
+  "analyze_compress":   "Analysing compression...",
   "finalize":           "Finalising...",
   "done":               "Done",
   "error":              "Error"
@@ -5351,11 +5421,9 @@ var _GEN_NODE_LABELS = {
 var _GEN_STEP_ORDER = [
   {key: "retrieve_kb_docs",   label: "Retrieve KB"},
   {key: "generate_or_revise", label: "Generate"},
+  {key: "compile_and_check",  label: "Compile"},
   {key: "analyze_fit",        label: "Analyze fit"},
   {key: "analyze_quality",    label: "Check quality"},
-  {key: "apply_suggestions",  label: "Apply improvements"},
-  {key: "compile_and_check",  label: "Compile"},
-  {key: "reduce_size",        label: "Reduce size"},
   {key: "finalize",           label: "Finalize"}
 ];
 
@@ -5385,12 +5453,22 @@ function _initGenProgress(docType) {
 function _updateGenProgress(docType, activeNode) {
   var container = document.getElementById(docType + "-gen-progress");
   if (!container) return;
+  var step = container.querySelector(".gen-progress-step[data-step-key=\\"" + activeNode + "\\"]");
+  if (!step) return; // skip unknown nodes like analyze_compress
+  // If this step was already completed (loop re-entry), reset it and all following steps
+  if (step.classList.contains("completed")) {
+    var allSteps = container.querySelectorAll(".gen-progress-step");
+    var found = false;
+    for (var i = 0; i < allSteps.length; i++) {
+      if (allSteps[i] === step) found = true;
+      if (found) allSteps[i].className = "gen-progress-step";
+    }
+  }
   // Mark previously active step as completed
   var prev = container.querySelector(".gen-progress-step.active");
   if (prev) prev.className = "gen-progress-step completed";
-  // Mark new node as active (skip unknown nodes)
-  var step = container.querySelector(".gen-progress-step[data-step-key=\\"" + activeNode + "\\"]");
-  if (step) step.className = "gen-progress-step active";
+  // Mark new node as active
+  step.className = "gen-progress-step active";
 }
 
 function _completeGenProgress(docType) {
@@ -5416,6 +5494,74 @@ function _hideGenProgress(docType) {
   if (container) {
     container.style.display = "none";
     container.innerHTML = "";
+  }
+}
+
+async function _handleGenSSE(docType, resp) {
+  var docId = _currentDocId[docType];
+  // Read SSE stream
+  var reader = resp.body.getReader();
+  var decoder = new TextDecoder();
+  var buffer = "";
+
+  while (true) {
+    var chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    var lines = buffer.split("\\n");
+    buffer = lines.pop();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.startsWith("data: ")) continue;
+      var raw = line.slice(6).trim();
+      if (!raw) continue;
+      var evt;
+      try { evt = JSON.parse(raw); } catch (e) { continue; }
+
+      if (evt.node && evt.node !== "done" && evt.node !== "error") {
+        _updateGenProgress(docType, evt.node);
+      }
+
+      if (evt.node === "done") {
+        _showCompileOverlay(docType, false);
+        _completeGenProgress(docType);
+        if (evt.latex) {
+          _cmEditors[docType].setValue(evt.latex);
+          _buildInstructionsFromLatex(docType, evt.latex);
+          // Refresh PDF preview from the cache the server just populated
+          var previewEl = document.getElementById(docType + "-preview-frame");
+          if (previewEl) {
+            var pdfUrl = API_BASE + "/documents/" + docId + "/pdf?t=" + Date.now();
+            _currentPdfUrl[docType] = API_BASE + "/documents/" + docId + "/pdf";
+            _renderPdf(docType, pdfUrl);
+          }
+          document.getElementById(docType + "-download-btn").style.display = "";
+          _loadVersions(docType);
+        }
+        // Show agent feedback panel
+        var panel = document.getElementById(docType + "-agent-feedback");
+        if (panel && (evt.fit_feedback || evt.quality_feedback || evt.generation_system_prompt || evt.generation_user_prompt)) {
+          panel.style.display = "";
+          var fitEl = document.getElementById(docType + "-fit-feedback");
+          var qualEl = document.getElementById(docType + "-quality-feedback");
+          var sysPromptEl = document.getElementById(docType + "-generation-system-prompt");
+          var userPromptEl = document.getElementById(docType + "-generation-user-prompt");
+          if (fitEl) fitEl.value = evt.fit_feedback || "";
+          if (qualEl) qualEl.value = evt.quality_feedback || "";
+          if (sysPromptEl) sysPromptEl.textContent = evt.generation_system_prompt || "";
+          if (userPromptEl) userPromptEl.textContent = evt.generation_user_prompt || "";
+        }
+        var pageLabel = evt.page_count ? " (" + evt.page_count + " page)" : "";
+        _setGenStatus(docType, "Generated" + pageLabel, "success");
+      }
+
+      if (evt.node === "error") {
+        _showCompileOverlay(docType, false);
+        _errorGenProgress(docType);
+        _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
+      }
+    }
   }
 }
 
@@ -5465,70 +5611,57 @@ async function _generateDoc(docType) {
     return;
   }
 
-  // Read SSE stream
-  var reader = resp.body.getReader();
-  var decoder = new TextDecoder();
-  var buffer = "";
+  await _handleGenSSE(docType, resp);
+}
 
-  while (true) {
-    var chunk = await reader.read();
-    if (chunk.done) break;
-    buffer += decoder.decode(chunk.value, { stream: true });
-    var lines = buffer.split("\\n");
-    buffer = lines.pop();
+async function _reviseDoc(docType) {
+  var docId = _currentDocId[docType];
+  if (!docId) return;
 
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      if (!line.startsWith("data: ")) continue;
-      var raw = line.slice(6).trim();
-      if (!raw) continue;
-      var evt;
-      try { evt = JSON.parse(raw); } catch (e) { continue; }
-
-      if (evt.node && evt.node !== "done" && evt.node !== "error") {
-        _updateGenProgress(docType, evt.node);
-      }
-
-      if (evt.node === "done") {
-        _showCompileOverlay(docType, false);
-        _completeGenProgress(docType);
-        if (evt.latex) {
-          _cmEditors[docType].setValue(evt.latex);
-          _buildInstructionsFromLatex(docType, evt.latex);
-          // Refresh PDF preview from the cache the server just populated
-          var previewEl = document.getElementById(docType + "-preview-frame");
-          if (previewEl) {
-            var pdfUrl = API_BASE + "/documents/" + docId + "/pdf?t=" + Date.now();
-            _currentPdfUrl[docType] = API_BASE + "/documents/" + docId + "/pdf";
-            _renderPdf(docType, pdfUrl);
-          }
-          document.getElementById(docType + "-download-btn").style.display = "";
-          _loadVersions(docType);
-        }
-        // Show agent feedback panel
-        var panel = document.getElementById(docType + "-agent-feedback");
-        if (panel && (evt.fit_feedback || evt.quality_feedback || evt.generation_system_prompt || evt.generation_user_prompt)) {
-          panel.style.display = "";
-          var fitEl = document.getElementById(docType + "-fit-feedback");
-          var qualEl = document.getElementById(docType + "-quality-feedback");
-          var sysPromptEl = document.getElementById(docType + "-generation-system-prompt");
-          var userPromptEl = document.getElementById(docType + "-generation-user-prompt");
-          if (fitEl) fitEl.textContent = evt.fit_feedback || "";
-          if (qualEl) qualEl.textContent = evt.quality_feedback || "";
-          if (sysPromptEl) sysPromptEl.textContent = evt.generation_system_prompt || "";
-          if (userPromptEl) userPromptEl.textContent = evt.generation_user_prompt || "";
-        }
-        var pageLabel = evt.page_count ? " (" + evt.page_count + " page)" : "";
-        _setGenStatus(docType, "Generated" + pageLabel, "success");
-      }
-
-      if (evt.node === "error") {
-        _showCompileOverlay(docType, false);
-        _errorGenProgress(docType);
-        _setGenStatus(docType, "Error: " + (evt.detail || "unknown"), "error");
-      }
-    }
+  // Save current editor state first
+  var saveBody = {
+    latex_source: _cmEditors[docType].getValue(),
+    prompt_text: _getInstructionsAsJson(docType)
+  };
+  try {
+    await apiFetch("PUT", "/documents/" + docId, saveBody);
+  } catch (e) {
+    _setGenStatus(docType, "Save failed: " + e.message, "error");
+    return;
   }
+
+  // Read edited feedback from textareas
+  var fitFbEl = document.getElementById(docType + "-fit-feedback");
+  var qualFbEl = document.getElementById(docType + "-quality-feedback");
+  var fitFb = fitFbEl ? fitFbEl.value : "";
+  var qualFb = qualFbEl ? qualFbEl.value : "";
+
+  _initGenProgress(docType);
+  _showCompileOverlay(docType, true);
+
+  var resp;
+  try {
+    resp = await fetch(API_BASE + "/documents/" + docId + "/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_first_generation: false, fit_feedback: fitFb, quality_feedback: qualFb })
+    });
+  } catch (e) {
+    _hideGenProgress(docType);
+    _setGenStatus(docType, "Network error: " + e.message, "error");
+    _showCompileOverlay(docType, false);
+    return;
+  }
+
+  if (!resp.ok) {
+    var errData = await resp.json().catch(function() { return { detail: "Request failed" }; });
+    _hideGenProgress(docType);
+    _setGenStatus(docType, errData.detail || "Revise failed", "error");
+    _showCompileOverlay(docType, false);
+    return;
+  }
+
+  await _handleGenSSE(docType, resp);
 }
 
 async function _critiqueDoc(docType) {
@@ -5601,8 +5734,8 @@ async function _critiqueDoc(docType) {
           var qualEl = document.getElementById(docType + "-quality-feedback");
           var sysPromptEl = document.getElementById(docType + "-generation-system-prompt");
           var userPromptEl = document.getElementById(docType + "-generation-user-prompt");
-          if (fitEl) fitEl.textContent = evt.fit_feedback || "";
-          if (qualEl) qualEl.textContent = evt.quality_feedback || "";
+          if (fitEl) fitEl.value = evt.fit_feedback || "";
+          if (qualEl) qualEl.value = evt.quality_feedback || "";
           if (sysPromptEl) sysPromptEl.textContent = evt.generation_system_prompt || "";
           if (userPromptEl) userPromptEl.textContent = evt.generation_user_prompt || "";
         }
