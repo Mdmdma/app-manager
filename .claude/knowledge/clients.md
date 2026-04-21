@@ -1,6 +1,6 @@
 # clients Knowledge
 <!-- source: jam/llm.py, jam/kb_client.py, jam/gmail_client.py -->
-<!-- hash: e8e778967547 -->
+<!-- hash: 31fcea19bbb4 -->
 <!-- updated: 2026-04-01 -->
 
 ## llm.py -- Public API
@@ -44,9 +44,23 @@
 | Function | Signature | Purpose |
 |---|---|---|
 | `search_documents` | `async (query: str, n_results: int = 5, namespace_ids: list[str] \| None = None, settings: Settings \| None = None) -> list[dict]` | Semantic search across KB; degrades to `[]` on error/404 |
-| `list_namespace_documents` | `async (namespace_ids: list[str], settings: Settings \| None = None) -> list[dict]` | Fetch all chunks for given namespaces via search endpoint (neutral query, top_k=100); groups and sorts by doc_id + chunk_index |
+| `list_namespace_documents` | `async (namespace_ids: list[str], settings: Settings \| None = None) -> list[dict]` | Fetch all chunks for given namespaces via `POST /documents/chunks` (Qdrant scroll, no embedding); server-side sorting by `(doc_id, chunk_index)`; **cached for 60s** |
 | `ingest_url` | `async (url: str, settings: Settings \| None = None) -> dict` | Ingest a URL into `job-applications` namespace; auto-creates namespace |
 | `ingest_text` | `async (text: str, source_url: str, settings: Settings \| None = None) -> dict` | Two-step upload-batch/confirm-batch flow for pre-extracted text (PDFs etc.) |
+| `close_client` | `async () -> None` | Close the shared AsyncClient singleton; call on server shutdown |
+| `clear_ns_cache` | `() -> None` | Manually invalidate the list_namespace_documents TTL cache |
+
+### Shared AsyncClient singleton
+
+All public functions use a lazily-created module-level `httpx.AsyncClient` singleton (`_get_client()`). Connection pool: `max_connections=20`, `max_keepalive_connections=10`, `keepalive_expiry=30`. Per-request timeouts are passed as kwargs. `close_client()` must be called on shutdown (wired into `jam/server.py` via `@app.on_event("shutdown")`).
+
+### TTL cache (list_namespace_documents)
+
+- `_NS_CACHE_TTL = 60.0` seconds
+- Key: `tuple(sorted(namespace_ids))`, Value: `(monotonic_timestamp, results)`
+- On cache hit (within TTL): returns immediately, no HTTP call
+- On error: cache is **not** populated (stale entry may still be evicted)
+- `clear_ns_cache()` empties the entire cache dict
 
 ### KB API contract
 
@@ -54,7 +68,8 @@
 |---|---|---|
 | `/namespaces/{id}` | GET | `_ensure_namespace` -- check existence |
 | `/namespaces` | POST | `_ensure_namespace` -- create if missing |
-| `/search` | POST | `search_documents`, `list_namespace_documents` |
+| `/search` | POST | `search_documents` |
+| `/documents/chunks` | POST | `list_namespace_documents` (namespace_ids + limit=500; no embedding) |
 | `/ingest` | POST | `ingest_url` |
 | `/ingest/upload-batch` | POST | `ingest_text` step 1 |
 | `/ingest/confirm-batch` | POST | `ingest_text` step 2 |
@@ -65,14 +80,15 @@
 |---|---|---|
 | `_JOB_APPS_NS` | `"job-applications"` | Default namespace ID |
 | `_JOB_APPS_LABEL` | `"Job Applications"` | Namespace display label |
+| `_NS_CACHE_TTL` | `60.0` | Cache lifetime in seconds |
 
 ### Graceful degradation
 
 - `search_documents`: returns `[]` on 404, network errors, or any exception.
-- `list_namespace_documents`: returns `[]` on 404, network errors; logs warning.
+- `list_namespace_documents`: returns `[]` on 404, network errors; logs warning. Does not populate cache on error.
 - `ingest_url` / `ingest_text`: raise `httpx.HTTPStatusError` on failure.
 
-### Timeouts
+### Timeouts (per-request, not on shared client)
 
 - `search_documents`: 10s
 - `list_namespace_documents`: 15s
@@ -111,39 +127,40 @@ Unlike `llm.py` and `kb_client.py` which import `Settings` at module level, `gma
 ## Dependencies
 
 - **llm.py** imports from: `json`, `re`, `httpx`, `jam.config.Settings`
-- **kb_client.py** imports from: `httpx`, `logging`, `collections.defaultdict` (deferred), `urllib.parse` (deferred), `jam.config.Settings`
+- **kb_client.py** imports from: `httpx`, `logging`, `time`, `urllib.parse` (deferred), `jam.config.Settings`
 - **gmail_client.py** imports from: `base64`, `hashlib`, `secrets`, `email.mime.text`, `google_auth_oauthlib.flow.Flow`, `google.oauth2.credentials.Credentials`, `googleapiclient.discovery.build`, `jam.config.Settings` (TYPE_CHECKING), `jam.db.set_setting` (deferred), `jam.db.get_all_settings` (deferred)
 
 ### Imported by
 
 | Module | Imports |
 |---|---|
-| `jam/server.py` | `extract_job_info` from llm; `ingest_url`, `ingest_text` from kb_client; `get_auth_url`, `exchange_code` from gmail_client (deferred) |
+| `jam/server.py` | `extract_job_info` from llm; `ingest_url`, `ingest_text`, `close_client` from kb_client; `get_auth_url`, `exchange_code` from gmail_client (deferred) |
 | `jam/server.py` | `list_namespace_documents`, `search_documents` from kb_client (deferred, inside endpoint) |
 | `jam/generation.py` | `llm_call` from llm (deferred, 5 call sites); `search_documents`, `list_namespace_documents` from kb_client (deferred) |
 
 ## Shared patterns
 
 - **Settings injection**: All public functions accept `settings: Settings | None = None` and resolve via `settings = settings or Settings()`.
-- **No global state at import**: No `Settings()` calls or HTTP clients created at module level.
-- **httpx.AsyncClient**: Used as async context manager in both `llm.py` and `kb_client.py`; never shared across calls.
+- **No global state at import**: No `Settings()` calls or HTTP clients created at module level. `kb_client._client` is declared `None` and lazily initialised on first use.
+- **httpx.AsyncClient**: `llm.py` uses `async with httpx.AsyncClient(...)` per call. `kb_client.py` uses a **shared singleton** (`_get_client()`) with connection pooling; per-request timeouts passed as kwargs.
 - **gmail_client.py** uses synchronous Google API client (`googleapiclient.discovery.build`), not httpx.
 
 ## Testing
 
 - **Files**: `tests/unit/test_llm.py`, `tests/unit/test_kb_client.py`, `tests/unit/test_gmail_client.py`
 - **Mock targets**:
-  - `jam.llm.httpx.AsyncClient` -- mock HTTP for all LLM provider tests
-  - `jam.kb_client.httpx.AsyncClient` -- mock HTTP for all KB API tests
+  - `jam.llm.httpx.AsyncClient` -- mock HTTP for all LLM provider tests (async context manager)
+  - `jam.kb_client._get_client` -- mock the shared singleton; returns a plain `AsyncMock` instance (no context manager)
   - `jam.gmail_client.get_credentials` -- mock credential building
   - `jam.gmail_client.build` -- mock Google API service construction
   - `jam.gmail_client.Flow.from_client_config` -- mock OAuth flow (via `google_auth_oauthlib`)
-- **Pattern**: All LLM/KB tests use `AsyncMock` with `__aenter__`/`__aexit__` to mock the async context manager. Gmail tests use synchronous `MagicMock`.
+- **Pattern**: LLM tests use `AsyncMock` with `__aenter__`/`__aexit__` to mock the async context manager. KB tests mock `_get_client` returning a plain `AsyncMock` (no context manager needed). Gmail tests use synchronous `MagicMock`.
+- **KB cache isolation**: Tests use a `clear_cache` autouse fixture that calls `clear_ns_cache()` before each test.
 
 ## Known Limitations
 
-- `list_namespace_documents` is capped at 100 chunks (KB API `top_k` limit); namespaces with more content will be truncated.
-- `list_namespace_documents` uses a neutral single-space query which may introduce semantic bias in ranking.
+- `list_namespace_documents` requests up to 500 chunks (configurable via `limit` param in request body); namespaces with more content will be truncated.
+- TTL cache (60s) means KB changes within that window won't be reflected until expiry or manual `clear_ns_cache()`.
 - `gmail_client.py` hardcodes `REDIRECT_URI` to `localhost:8001`; not configurable for deployment.
 - Gmail functions are synchronous (blocking) despite the rest of the codebase being async.
 - No retry logic in any client; transient failures propagate or silently degrade.
