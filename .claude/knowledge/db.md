@@ -1,7 +1,7 @@
 # db Knowledge
 <!-- source: jam/db.py -->
-<!-- hash: a4de3984de5a -->
-<!-- updated: 2026-04-01 -->
+<!-- hash: 41b1c9f81fd6 -->
+<!-- updated: 2026-04-21 -->
 
 ## Public API
 
@@ -230,11 +230,16 @@
 
 ### Seeded catalog data
 
-Providers: `openai`, `anthropic`, `groq`, `ollama`
+Providers (5): `openai`, `anthropic`, `groq`, `ollama`, `cliproxy`
 
-Models (14 total): GPT-4o, GPT-4o mini, GPT-4 Turbo, GPT-3.5 Turbo, Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5, Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B, Gemma 2 9B, Llama 3.2, Mistral, Phi-3
+Models (18 total):
+- **OpenAI**: GPT-4o, GPT-4o mini, GPT-4 Turbo, GPT-3.5 Turbo
+- **Anthropic**: Claude Opus 4.7, Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5
+- **Groq**: Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B, Gemma 2 9B
+- **Ollama**: Llama 3.2, Mistral, Phi-3
+- **CLIProxy**: Claude Opus 4.7, Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5
 
-Provider fields: `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`
+Provider fields: `openai_api_key`, `anthropic_api_key`, `groq_api_key`, `ollama_base_url`, `cliproxy_base_url`, `cliproxy_api_key`
 
 ### Cascade deletes
 
